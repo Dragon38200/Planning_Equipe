@@ -1,37 +1,45 @@
 
-
-import React, { useState, useEffect, useRef } from 'react';
+import React from 'react';
 import { User, Role, Mission, WeekSelection, AppSettings, FormTemplate, FormResponse } from './types';
 import { INITIAL_MANAGERS, INITIAL_TECHNICIANS, DEFAULT_ADMIN, DEFAULT_TEMPLATES } from './constants';
 import { getCurrentWeekInfo, exportToCSV } from './utils';
 import TechnicianDashboard from './components/TechnicianDashboard';
 import ManagerDashboard from './components/ManagerDashboard';
 import AdminDashboard from './components/AdminDashboard';
-import { LogOut, Factory, Calendar, ClipboardList, BookOpen, Search, Eye, FileText, CheckCircle2, X, Trash2, Plus, Printer, AlertCircle, Settings, FileSpreadsheet, Download } from 'lucide-react';
+import MissionManager from './components/MissionManager';
+import { LogOut, Factory, Calendar, ClipboardList, BookOpen, Search, Eye, FileText, CheckCircle2, X, Trash2, Plus, Printer, AlertCircle, Settings, FileSpreadsheet, Download, Briefcase } from 'lucide-react';
 import { format } from 'date-fns';
 import { fr } from 'date-fns/locale';
+import { getInitialMissions } from './data';
 
 const App: React.FC = () => {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [missions, setMissions] = useState<Mission[]>([]);
-  const [users, setUsers] = useState<User[]>([]);
-  const [templates, setTemplates] = useState<FormTemplate[]>([]);
-  const [responses, setResponses] = useState<FormResponse[]>([]);
-  const [currentWeek, setCurrentWeek] = useState<WeekSelection>(getCurrentWeekInfo());
-  const [appSettings, setAppSettings] = useState<AppSettings>({ appName: 'PLANIT-MOUNIER', appLogoUrl: '' });
+  const [currentUser, setCurrentUser] = React.useState<User | null>(null);
+  const [missions, setMissions] = React.useState<Mission[]>([]);
+  const [users, setUsers] = React.useState<User[]>([]);
+  const [templates, setTemplates] = React.useState<FormTemplate[]>([]);
+  const [responses, setResponses] = React.useState<FormResponse[]>([]);
+  const [currentWeek, setCurrentWeek] = React.useState<WeekSelection>(getCurrentWeekInfo());
+  const [appSettings, setAppSettings] = React.useState<AppSettings>({ appName: 'PLANIT-MOUNIER', appLogoUrl: '' });
 
-  const [activeTab, setActiveTab] = useState<'PLANNING' | 'FORMS' | 'ADMIN'>('PLANNING');
-  const [adminFormsView, setAdminFormsView] = useState<'TEMPLATES' | 'HISTORY'>('TEMPLATES');
-  const [loginId, setLoginId] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
-  const [loginError, setLoginError] = useState('');
+  const [activeTab, setActiveTab] = React.useState<'PLANNING' | 'FORMS' | 'ADMIN'>('PLANNING');
+  const [managerView, setManagerView] = React.useState<'PLANNING' | 'GESTION'>('PLANNING');
+  const [adminFormsView, setAdminFormsView] = React.useState<'TEMPLATES' | 'HISTORY'>('TEMPLATES');
+  const [loginId, setLoginId] = React.useState('');
+  const [loginPassword, setLoginPassword] = React.useState('');
+  const [loginError, setLoginError] = React.useState('');
   
-  const isRestoring = useRef(false);
+  const isRestoring = React.useRef(false);
 
-  useEffect(() => {
+  React.useEffect(() => {
     try {
       const savedMissions = localStorage.getItem('plantit_missions');
-      if (savedMissions) setMissions(JSON.parse(savedMissions));
+      if (savedMissions) {
+        setMissions(JSON.parse(savedMissions));
+      } else {
+        const initialMissions = getInitialMissions();
+        setMissions(initialMissions);
+        localStorage.setItem('plantit_missions', JSON.stringify(initialMissions));
+      }
       const savedUsers = localStorage.getItem('plantit_users');
       if (savedUsers) setUsers(JSON.parse(savedUsers));
       else {
@@ -48,18 +56,30 @@ const App: React.FC = () => {
     } catch (e) { console.error(e); }
   }, []);
 
-  useEffect(() => { if (!isRestoring.current) localStorage.setItem('plantit_missions', JSON.stringify(missions)); }, [missions]);
-  useEffect(() => { localStorage.setItem('plantit_templates', JSON.stringify(templates)); }, [templates]);
-  useEffect(() => { localStorage.setItem('plantit_responses', JSON.stringify(responses)); }, [responses]);
+  React.useEffect(() => { if (!isRestoring.current) localStorage.setItem('plantit_missions', JSON.stringify(missions)); }, [missions]);
+  React.useEffect(() => { localStorage.setItem('plantit_templates', JSON.stringify(templates)); }, [templates]);
+  React.useEffect(() => { localStorage.setItem('plantit_responses', JSON.stringify(responses)); }, [responses]);
 
-  const handleUpdateUsers = (newUsers: User[]) => { setUsers(newUsers); localStorage.setItem('plantit_users', JSON.stringify(newUsers)); };
+  const handleUpdateUsers = (newUsers: User[], oldId?: string, newId?: string) => {
+    setUsers(newUsers); 
+    localStorage.setItem('plantit_users', JSON.stringify(newUsers));
+
+    // Si un ID utilisateur a changé, mettez à jour les missions associées.
+    if (oldId && newId && oldId !== newId) {
+        setMissions(prevMissions => prevMissions.map(mission => {
+            if (mission.technicianId === oldId) {
+                return { ...mission, technicianId: newId };
+            }
+            return mission;
+        }));
+    }
+  };
+
   const handleSaveResponse = (response: FormResponse) => { setResponses(prev => [...prev.filter(r => r.id !== response.id), response]); };
   const handleUpdateTemplates = (newTemplates: FormTemplate[]) => setTemplates(newTemplates);
   
-  const handleRestoreDatabase = (data: { missions: Mission[], users: User[], settings: AppSettings }) => {
-    setMissions(data.missions);
-    setUsers(data.users);
-    setAppSettings(data.settings);
+  const handleAppendMissions = (newMissions: Mission[]) => {
+    setMissions(prev => [...prev, ...newMissions]);
   };
   
   const handleLogin = (e: React.FormEvent) => {
@@ -73,12 +93,35 @@ const App: React.FC = () => {
   const updateMissions = (m: Mission[]) => { const ids = new Set(m.map(mi => mi.id)); setMissions(prev => [...prev.filter(mi => !ids.has(mi.id)), ...m]); };
   const removeMissionById = (id: string) => setMissions(prev => prev.filter(m => m.id !== id));
 
+  const renderManagerContent = () => {
+      const technicians = users.filter(u => u.role === Role.TECHNICIAN);
+      const managers = users.filter(u => u.role === Role.MANAGER);
+      return (
+        <div className="space-y-8">
+            <div className="flex justify-center gap-4 print:hidden">
+                <button onClick={() => setManagerView('PLANNING')} className={`px-8 py-3 rounded-xl text-[10px] font-black border-2 transition-all ${managerView === 'PLANNING' ? 'bg-slate-800 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300'}`}>PLANNING VISUEL</button>
+                <button onClick={() => setManagerView('GESTION')} className={`px-8 py-3 rounded-xl text-[10px] font-black border-2 transition-all ${managerView === 'GESTION' ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300'}`}>GESTION DES INTERVENTIONS</button>
+            </div>
+            {managerView === 'PLANNING' ? (
+                <ManagerDashboard user={currentUser!} missions={missions} technicians={technicians} onUpdateMissions={updateMissions} onRemoveMission={removeMissionById} responses={responses} templates={templates} />
+            ) : (
+                <MissionManager missions={missions} technicians={technicians} managers={managers} onUpdateMissions={updateMissions} onRemoveMission={removeMissionById} />
+            )}
+        </div>
+      );
+  }
+
   return (
     <div className="min-h-screen bg-slate-100">
       <nav className="bg-white/90 backdrop-blur-lg border-b border-slate-200 sticky top-0 z-50 shadow-sm print:hidden">
         <div className="max-w-screen-2xl mx-auto px-4 h-20 flex justify-between items-center">
           <div className="flex items-center gap-4">
-            <div className="bg-slate-800 text-white p-2 rounded-xl"><Factory size={24} /></div>
+             {/* LOGO DE L'APP (ADMIN) OU DEFAUT */}
+             {appSettings.appLogoUrl ? (
+                <img src={appSettings.appLogoUrl} alt="Logo" className="h-10 w-auto object-contain rounded-lg" />
+             ) : (
+                <div className="bg-slate-800 text-white p-2 rounded-xl"><Factory size={24} /></div>
+             )}
             <span className="text-xl font-black text-slate-800 uppercase tracking-tighter">{appSettings.appName}</span>
           </div>
           <div className="flex items-center gap-4">
@@ -111,7 +154,8 @@ const App: React.FC = () => {
       ) : (
         <main className="max-w-screen-2xl mx-auto px-4 py-10 print:p-0 print:m-0">
           <div className="flex justify-center mb-10 gap-2 print:hidden">
-            <button onClick={() => setActiveTab('PLANNING')} className={`px-6 py-3 rounded-2xl text-[11px] font-black transition-all ${activeTab === 'PLANNING' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'bg-white text-slate-500 hover:bg-slate-50'}`}><Calendar size={16} className="inline mr-2"/> PLANNING</button>
+             {currentUser.role === Role.TECHNICIAN && <button onClick={() => setActiveTab('PLANNING')} className={`px-6 py-3 rounded-2xl text-[11px] font-black transition-all ${activeTab === 'PLANNING' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'bg-white text-slate-500 hover:bg-slate-50'}`}><Calendar size={16} className="inline mr-2"/> PLANNING</button>}
+             {(currentUser.role === Role.MANAGER || currentUser.role === Role.ADMIN) && <button onClick={() => setActiveTab('PLANNING')} className={`px-6 py-3 rounded-2xl text-[11px] font-black transition-all ${activeTab === 'PLANNING' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'bg-white text-slate-500 hover:bg-slate-50'}`}><Briefcase size={16} className="inline mr-2"/> PLANNING & GESTION</button>}
             <button onClick={() => setActiveTab('FORMS')} className={`px-6 py-3 rounded-2xl text-[11px] font-black transition-all ${activeTab === 'FORMS' ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'bg-white text-slate-500 hover:bg-slate-50'}`}><ClipboardList size={16} className="inline mr-2"/> FORMULAIRES</button>
             {currentUser.role === Role.ADMIN && <button onClick={() => setActiveTab('ADMIN')} className={`px-6 py-3 rounded-2xl text-[11px] font-black transition-all ${activeTab === 'ADMIN' ? 'bg-slate-800 text-white shadow-lg shadow-slate-200' : 'bg-white text-slate-500 hover:bg-slate-50'}`}><Settings size={16} className="inline mr-2"/> ADMIN</button>}
           </div>
@@ -120,7 +164,7 @@ const App: React.FC = () => {
             currentUser.role === Role.TECHNICIAN ? (
               <TechnicianDashboard user={currentUser} missions={missions} week={currentWeek} onWeekChange={setCurrentWeek} onUpdateMissions={updateMissions} templates={templates} responses={responses} onSaveResponse={handleSaveResponse} onlyPlanningView />
             ) : (
-              <ManagerDashboard user={currentUser} missions={missions} technicians={users.filter(u => u.role === Role.TECHNICIAN)} onUpdateMissions={updateMissions} onRemoveMission={removeMissionById} responses={responses} templates={templates} />
+                renderManagerContent()
             )
           )}
           
@@ -136,7 +180,7 @@ const App: React.FC = () => {
                  {adminFormsView === 'TEMPLATES' ? (
                    <FormTemplateManager templates={templates} onUpdateTemplates={handleUpdateTemplates} />
                  ) : (
-                   <GlobalFormsHistory responses={responses} templates={templates} technicians={users.filter(u => u.role === Role.TECHNICIAN)} />
+                   <GlobalFormsHistory responses={responses} templates={templates} technicians={users.filter(u => u.role === Role.TECHNICIAN)} appSettings={appSettings} />
                  )}
               </div>
             ) : (
@@ -155,7 +199,7 @@ const App: React.FC = () => {
               appSettings={appSettings} 
               onUpdateAppSettings={setAppSettings} 
               missions={missions} 
-              onRestoreDatabase={handleRestoreDatabase} 
+              onAppendMissions={handleAppendMissions} 
             />
           )}
         </main>
@@ -164,10 +208,12 @@ const App: React.FC = () => {
   );
 };
 
-const GlobalFormsHistory: React.FC<{ responses: FormResponse[], templates: FormTemplate[], technicians: User[] }> = ({ responses, templates, technicians }) => {
-  const [selectedResponse, setSelectedResponse] = useState<FormResponse | null>(null);
-  const [isExporting, setIsExporting] = useState(false);
+const GlobalFormsHistory: React.FC<{ responses: FormResponse[], templates: FormTemplate[], technicians: User[], appSettings?: AppSettings }> = ({ responses, templates, technicians, appSettings }) => {
+  const [selectedResponse, setSelectedResponse] = React.useState<FormResponse | null>(null);
+  const [isExporting, setIsExporting] = React.useState(false);
   const sortedResponses = [...responses].sort((a,b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
+
+  const DEFAULT_LOGO_SVG = "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgdmlld0JveD0iMCAwIDEwMCAxMDAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGcgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMWUyOTNiIiBzdHJva2Utd2lkdGg9IjgiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHBhdGggZD0iTTE1IDg1IEwxNSAxNSBMNTAgNjAgTDg1IDE1IEw4NSA4NSIgLz48L2c+PC9zdmc+";
 
   // --- LOGIQUE D'IMPRESSION (V3 - NOUVELLE FENÊTRE) ---
   const handlePrint = () => {
@@ -207,7 +253,7 @@ const GlobalFormsHistory: React.FC<{ responses: FormResponse[], templates: FormT
         } else if (field.type === 'signature') {
             value = value ? '[SIGNATURE FOURNIE]' : '[NON SIGNÉ]';
         }
-        const headerKey = field.label.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9_]/g, '').replace(/\s+/g, '_');
+        const headerKey = field.label.normalize("NFD").replace(/[\u0000-\u001f\u007f-\u009f]/g, "").replace(/\s+/g, '_');
         rowData[headerKey] = value || '';
     });
     
@@ -241,7 +287,7 @@ const GlobalFormsHistory: React.FC<{ responses: FormResponse[], templates: FormT
             } else if (field.type === 'signature') {
                 value = value ? '[SIGNATURE FOURNIE]' : '[NON SIGNÉ]';
             }
-            const headerKey = field.label.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9_]/g, '').replace(/\s+/g, '_');
+            const headerKey = field.label.normalize("NFD").replace(/[\u0000-\u001f\u007f-\u009f]/g, "").replace(/\s+/g, '_');
             rowData[headerKey] = value || '';
         });
 
@@ -309,7 +355,7 @@ const GlobalFormsHistory: React.FC<{ responses: FormResponse[], templates: FormT
             <div id="printable-report" className="p-12 overflow-y-auto flex-1 space-y-12 scrollbar-thin bg-white">
                <div className="flex justify-between items-start border-b-2 border-slate-900 pb-8">
                   <div className="flex items-center gap-6">
-                      <img src="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgdmlld0JveD0iMCAwIDEwMCAxMDAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGcgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMWUyOTNiIiBzdHJva2Utd2lkdGg9IjgiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHBhdGggZD0iTTE1IDg1IEwxNSAxNSBMNTAgNjAgTDg1IDE1IEw4NSA4NSIgLz48L2c+PC9zdmc+" alt="Logo Mounier" className="h-16 w-16" />
+                      <img src={appSettings?.reportLogoUrl || DEFAULT_LOGO_SVG} alt="Logo" className="h-16 w-auto object-contain max-w-[200px]" />
                       <div>
                          <h1 className="text-3xl font-black text-slate-900 uppercase leading-none mb-1">MOUNIER</h1>
                          <p className="text-[10px] text-slate-500 font-black uppercase tracking-widest">CLIMATISATION - ELECTRICITE - PROCEDES INDUSTRIELS</p>
@@ -327,9 +373,10 @@ const GlobalFormsHistory: React.FC<{ responses: FormResponse[], templates: FormT
                      <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4">Identification du chantier</p>
                      <div className="grid grid-cols-2 gap-x-12 gap-y-6">
                         <div><p className="text-[8px] font-black text-slate-400 uppercase">CLIENT</p><p className="text-sm font-black text-slate-900">{selectedResponse.data.client_name || '-'}</p></div>
+                        <div><p className="text-[8px] font-black text-slate-400 uppercase">ADRESSE CHANTIER</p><p className="text-sm font-black text-slate-900">{selectedResponse.data.address || '-'}</p></div>
                         <div><p className="text-[8px] font-black text-slate-400 uppercase">N° COMMANDE</p><p className="text-sm font-black text-slate-900">{selectedResponse.data.cmd_number || '-'}</p></div>
                         <div><p className="text-[8px] font-black text-slate-400 uppercase">N° D'AFFAIRE</p><p className="text-sm font-black text-slate-900">{selectedResponse.data.job_number || '-'}</p></div>
-                        <div><p className="text-[8px] font-black text-slate-400 uppercase">LIBELLÉ</p><p className="text-sm font-black text-slate-900">{selectedResponse.data.job_label || '-'}</p></div>
+                        <div className="col-span-2"><p className="text-[8px] font-black text-slate-400 uppercase">LIBELLÉ</p><p className="text-sm font-black text-slate-900">{selectedResponse.data.job_label || '-'}</p></div>
                      </div>
                   </div>
                   <div className="col-span-2 p-6 border-2 border-slate-100 rounded-[2rem] flex items-center gap-6">
@@ -372,8 +419,8 @@ const GlobalFormsHistory: React.FC<{ responses: FormResponse[], templates: FormT
 };
 
 const FormTemplateManager: React.FC<{ templates: FormTemplate[], onUpdateTemplates: (t: FormTemplate[]) => void }> = ({ templates, onUpdateTemplates }) => {
-  const [editingTemplate, setEditingTemplate] = useState<Partial<FormTemplate> | null>(null);
-  const [previewingTemplate, setPreviewingTemplate] = useState<FormTemplate | null>(null);
+  const [editingTemplate, setEditingTemplate] = React.useState<Partial<FormTemplate> | null>(null);
+  const [previewingTemplate, setPreviewingTemplate] = React.useState<FormTemplate | null>(null);
 
   const handleAddTemplate = () => setEditingTemplate({ id: `tpl-${Date.now()}`, name: 'Nouveau Formulaire', fields: [], description: '' });
   const handleAddField = () => { if (editingTemplate) setEditingTemplate({ ...editingTemplate, fields: [...(editingTemplate.fields || []), { id: `f-${Date.now()}`, label: 'Nouveau Champ', type: 'text', required: false }] }); };

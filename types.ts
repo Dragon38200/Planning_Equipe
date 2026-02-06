@@ -31,14 +31,17 @@ export interface User {
 
 export interface AppSettings {
   appName: string;
-  appLogoUrl?: string;
+  appLogoUrl?: string;    // Logo pour la barre de navigation
+  reportLogoUrl?: string; // Logo pour les rapports PDF
 }
 
 export interface Mission {
   id: string;
   date: string; 
   jobNumber: string; 
-  hours: number;
+  workHours: number;
+  travelHours: number;
+  overtimeHours: number;
   type: MissionType;
   status: MissionStatus;
   technicianId: string;
