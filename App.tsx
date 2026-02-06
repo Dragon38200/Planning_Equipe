@@ -7,7 +7,7 @@ import TechnicianDashboard from './components/TechnicianDashboard';
 import ManagerDashboard from './components/ManagerDashboard';
 import AdminDashboard from './components/AdminDashboard';
 import MissionManager from './components/MissionManager';
-import { LogOut, Factory, Calendar, ClipboardList, BookOpen, Search, Eye, FileText, CheckCircle2, X, Trash2, Plus, Printer, AlertCircle, Settings, FileSpreadsheet, Download, Briefcase } from 'lucide-react';
+import { LogOut, Factory, Calendar, ClipboardList, BookOpen, Search, Eye, FileText, CheckCircle2, X, Trash2, Plus, Printer, AlertCircle, Settings, FileSpreadsheet, Download, Briefcase, Lock, ArrowRight, User as UserIcon } from 'lucide-react';
 import { format } from 'date-fns';
 import { fr } from 'date-fns/locale';
 import { getInitialMissions } from './data';
@@ -112,44 +112,114 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100">
-      <nav className="bg-white/90 backdrop-blur-lg border-b border-slate-200 sticky top-0 z-50 shadow-sm print:hidden">
-        <div className="max-w-screen-2xl mx-auto px-4 h-20 flex justify-between items-center">
-          <div className="flex items-center gap-4">
-             {/* LOGO DE L'APP (ADMIN) OU DEFAUT */}
-             {appSettings.appLogoUrl ? (
-                <img src={appSettings.appLogoUrl} alt="Logo" className="h-10 w-auto object-contain rounded-lg" />
-             ) : (
-                <div className="bg-slate-800 text-white p-2 rounded-xl"><Factory size={24} /></div>
-             )}
-            <span className="text-xl font-black text-slate-800 uppercase tracking-tighter">{appSettings.appName}</span>
-          </div>
-          <div className="flex items-center gap-4">
-            {currentUser && (
+    <div className="min-h-screen bg-slate-100 font-inter">
+      {currentUser && (
+        <nav className="bg-white/90 backdrop-blur-lg border-b border-slate-200 sticky top-0 z-50 shadow-sm print:hidden">
+          <div className="max-w-screen-2xl mx-auto px-4 h-20 flex justify-between items-center">
+            <div className="flex items-center gap-4">
+               {appSettings.appLogoUrl ? (
+                  <img src={appSettings.appLogoUrl} alt="Logo" className="h-10 w-auto object-contain rounded-lg" />
+               ) : (
+                  <div className="bg-slate-800 text-white p-2 rounded-xl"><Factory size={24} /></div>
+               )}
+              <span className="text-xl font-black text-slate-800 uppercase tracking-tighter">{appSettings.appName}</span>
+            </div>
+            <div className="flex items-center gap-4">
               <div className="flex items-center gap-3 px-4 py-2 bg-slate-50 rounded-2xl border border-slate-200">
                 <div className="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[10px] font-black">{currentUser.initials}</div>
                 <span className="hidden md:inline text-xs font-black text-slate-800">{currentUser.name}</span>
               </div>
-            )}
-            {currentUser && <button onClick={handleLogout} className="p-2 text-slate-400 hover:text-red-600 transition-colors"><LogOut size={20} /></button>}
+              <button onClick={handleLogout} className="p-2 text-slate-400 hover:text-red-600 transition-colors"><LogOut size={20} /></button>
+            </div>
           </div>
-        </div>
-      </nav>
+        </nav>
+      )}
       
       {!currentUser ? (
-        <div className="flex items-center justify-center min-h-[calc(100vh-80px)] p-4">
-          <form onSubmit={handleLogin} className="bg-white p-10 rounded-[2.5rem] shadow-2xl border border-slate-200 w-full max-w-md space-y-6">
-            <div className="space-y-2 text-center">
-              <h1 className="text-3xl font-black text-slate-800 tracking-tight">Accès Plani-Mounier</h1>
-              <p className="text-slate-400 font-medium">Connectez-vous à votre espace.</p>
-            </div>
-            {loginError && <p className="text-red-500 text-sm font-bold bg-red-50 p-4 rounded-2xl text-center border border-red-100">{loginError}</p>}
-            <div className="space-y-4">
-              <input type="text" placeholder="Identifiant" value={loginId} onChange={e => setLoginId(e.target.value)} className="w-full p-5 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 font-bold transition-all" />
-              <input type="password" placeholder="Mot de passe" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} className="w-full p-5 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 font-bold transition-all" />
-            </div>
-            <button className="w-full py-5 bg-slate-800 text-white rounded-2xl font-black hover:bg-slate-700 transition-all shadow-xl shadow-slate-200">SE CONNECTER</button>
-          </form>
+        <div className="min-h-screen relative flex items-center justify-center bg-slate-900 overflow-hidden font-inter">
+            {/* IMAGE DE FOND DRAGON - PLEIN ECRAN */}
+             <div className="absolute inset-0 z-0">
+                <img 
+                   src="https://images.unsplash.com/photo-1599707367072-cd6ad66acc40?q=80&w=2000&auto=format&fit=crop" 
+                   alt="Dragon Background" 
+                   className="w-full h-full object-cover opacity-30 mix-blend-luminosity filter contrast-125"
+                />
+                <div className="absolute inset-0 bg-gradient-to-br from-slate-950 via-slate-900/90 to-indigo-950/80 mix-blend-multiply"></div>
+                <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-indigo-900/40 via-transparent to-slate-950/80"></div>
+             </div>
+
+             {/* CONTENU CENTRAL */}
+             <div className="relative z-10 w-full max-w-md p-6 animate-in fade-in zoom-in-95 duration-700">
+                
+                {/* Logo et Titre */}
+                <div className="text-center mb-10">
+                   <div className="inline-flex p-6 bg-white/5 backdrop-blur-xl rounded-full border border-white/10 mb-6 shadow-2xl relative group hover:scale-105 transition-transform duration-500">
+                      <div className="absolute inset-0 bg-indigo-500/20 rounded-full blur-xl group-hover:bg-indigo-500/30 transition-all"></div>
+                      {appSettings.appLogoUrl ? (
+                         <img src={appSettings.appLogoUrl} alt="Logo" className="h-20 w-auto object-contain relative z-10 drop-shadow-2xl" />
+                      ) : (
+                         <Factory size={56} className="text-indigo-400 relative z-10 drop-shadow-2xl"/>
+                      )}
+                   </div>
+                   <h1 className="text-5xl font-black text-white uppercase tracking-tighter mb-3 drop-shadow-lg">
+                      {appSettings.appName}
+                   </h1>
+                   <div className="h-1 w-20 bg-gradient-to-r from-transparent via-indigo-500 to-transparent mx-auto mb-4 opacity-80"></div>
+                   <p className="text-indigo-200/70 font-bold text-sm uppercase tracking-widest">Portail Interventions & Rapports</p>
+                </div>
+
+                {/* Carte de Connexion */}
+                <div className="bg-white/95 backdrop-blur-xl rounded-[2.5rem] p-8 shadow-2xl border border-white/20 relative overflow-hidden">
+                    <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-500"></div>
+                    
+                    <h2 className="text-2xl font-black text-slate-800 mb-6 text-center uppercase tracking-tight">Connexion</h2>
+
+                    {loginError && (
+                       <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-500 rounded-r-xl flex items-center gap-3 animate-in slide-in-from-top-2">
+                          <AlertCircle className="text-red-500 shrink-0" size={20}/>
+                          <p className="text-xs font-bold text-red-700">{loginError}</p>
+                       </div>
+                    )}
+
+                    <form onSubmit={handleLogin} className="space-y-5">
+                       <div className="space-y-1">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-3">Identifiant</label>
+                          <div className="relative group">
+                             <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-600 transition-colors" size={20}/>
+                             <input 
+                                type="text" 
+                                placeholder="ex: nom.p" 
+                                value={loginId} 
+                                onChange={e => setLoginId(e.target.value)} 
+                                className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-800 outline-none focus:ring-4 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all shadow-inner" 
+                             />
+                          </div>
+                       </div>
+                       
+                       <div className="space-y-1">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-3">Mot de passe</label>
+                          <div className="relative group">
+                             <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-600 transition-colors" size={20}/>
+                             <input 
+                                type="password" 
+                                placeholder="••••••••" 
+                                value={loginPassword} 
+                                onChange={e => setLoginPassword(e.target.value)} 
+                                className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-800 outline-none focus:ring-4 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all shadow-inner" 
+                             />
+                          </div>
+                       </div>
+
+                       <button className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-indigo-600 hover:shadow-lg hover:shadow-indigo-500/30 transition-all flex items-center justify-center gap-2 group mt-4 transform active:scale-95 duration-200">
+                          Se Connecter <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform"/>
+                       </button>
+                    </form>
+                </div>
+                
+                <div className="mt-8 text-center opacity-60 hover:opacity-100 transition-opacity">
+                   <p className="text-[9px] text-white font-black uppercase tracking-[0.2em]">© {new Date().getFullYear()} Mounier - Tous droits réservés</p>
+                </div>
+             </div>
         </div>
       ) : (
         <main className="max-w-screen-2xl mx-auto px-4 py-10 print:p-0 print:m-0">
