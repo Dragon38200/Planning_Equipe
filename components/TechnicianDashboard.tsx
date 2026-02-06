@@ -1,8 +1,8 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { User, Mission, WeekSelection, MissionType, MissionStatus, FormTemplate, FormResponse, FormField } from '../types';
 import { getWeekDates, formatFrenchDate, isSunday } from '../utils';
-import { CheckSquare, Square, X, FileText, Plus, CheckCircle2, PenTool, Loader2, AlertCircle, MapPin } from 'lucide-react';
+import { CheckSquare, Square, X, FileText, Plus, CheckCircle2, PenTool, Loader2, AlertCircle, MapPin, ShieldCheck, ShieldX, Clock, Map, List, Navigation } from 'lucide-react';
 import { format, isSameDay } from 'date-fns';
 
 interface Props {
@@ -27,6 +27,9 @@ const TechnicianDashboard: React.FC<Props> = ({ user, missions, week, onUpdateMi
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   
+  // State pour basculer entre la vue Liste et la vue Carte
+  const [viewMode, setViewMode] = useState<'LIST' | 'MAP'>('LIST');
+  
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [activeSignatureFieldId, setActiveSignatureFieldId] = useState<string | null>(null);
@@ -43,12 +46,54 @@ const TechnicianDashboard: React.FC<Props> = ({ user, missions, week, onUpdateMi
         synced.push(existing[i] || {
           id: `m-${user.id}-${date.toISOString()}-${i+1}`,
           date: date.toISOString(),
-          jobNumber: '', hours: 0, type: MissionType.WORK, status: MissionStatus.PENDING, technicianId: user.id, managerInitials: '', igd: false, description: '', address: ''
+          jobNumber: '', workHours: 0, travelHours: 0, overtimeHours: 0, type: MissionType.WORK, status: MissionStatus.PENDING, technicianId: user.id, managerInitials: '', igd: false, description: '', address: ''
         });
       });
     });
     setLocalMissions(synced);
   }, [week, missions, user.id]);
+
+  const dailyTotals = useMemo(() => {
+    const totals: Record<string, number> = {};
+    localMissions.forEach(m => {
+        const day = m.date.split('T')[0];
+        if (!totals[day]) totals[day] = 0;
+        totals[day] += (m.workHours || 0) + (m.travelHours || 0) + (m.overtimeHours || 0);
+    });
+    return totals;
+  }, [localMissions]);
+
+  const weeklyTotals = useMemo(() => {
+    return localMissions.reduce((acc, m) => {
+        acc.work += m.workHours || 0;
+        acc.travel += m.travelHours || 0;
+        acc.overtime += m.overtimeHours || 0;
+        return acc;
+    }, { work: 0, travel: 0, overtime: 0 });
+  }, [localMissions]);
+
+  const handleMissionChange = (missionId: string, field: keyof Mission, value: any) => {
+    let missionToSave: Mission | null = null;
+    const newLocalMissions = localMissions.map(m => {
+        if (m.id === missionId) {
+            const updated = { ...m, [field]: value };
+            if ((field === 'jobNumber' || field === 'workHours') && updated.status === MissionStatus.PENDING) {
+                if (updated.jobNumber && updated.workHours > 0) {
+                    updated.status = MissionStatus.SUBMITTED;
+                }
+            }
+            missionToSave = updated;
+            return updated;
+        }
+        return m;
+    });
+
+    setLocalMissions(newLocalMissions);
+    
+    if (missionToSave && (missionToSave.jobNumber || missionToSave.workHours > 0 || missionToSave.travelHours > 0 || missionToSave.overtimeHours > 0)) {
+        onUpdateMissions([missionToSave]);
+    }
+  };
 
   // --- LOGIQUE DE SIGNATURE ---
   const startDrawing = (e: any) => { 
@@ -112,11 +157,15 @@ const TechnicianDashboard: React.FC<Props> = ({ user, missions, week, onUpdateMi
       if (existing) {
         setFormData(existing.data);
       } else {
+        // Pré-remplissage intelligent
         const lastJobResponse = [...responses].reverse().find(r => r.data.job_number === mission.jobNumber);
         setFormData({
           job_number: mission.jobNumber,
+          // Utilise l'adresse de la mission, sinon rien
+          address: mission.address || '',
+          // Utilise la description de la mission pour le libellé, sinon tente l'historique
+          job_label: mission.description || lastJobResponse?.data.job_label || '',
           client_name: lastJobResponse?.data.client_name || '',
-          job_label: lastJobResponse?.data.job_label || '',
           cmd_number: lastJobResponse?.data.cmd_number || '',
           rep_mounier: user.name,
           date_effet: format(new Date(), 'yyyy-MM-dd'),
@@ -185,6 +234,26 @@ const TechnicianDashboard: React.FC<Props> = ({ user, missions, week, onUpdateMi
       setIsSubmitting(false);
     }
   };
+  
+  const getStatusIcon = (status: MissionStatus) => {
+    switch(status) {
+      case MissionStatus.VALIDATED: return <ShieldCheck className="text-emerald-500" size={16} />;
+      case MissionStatus.REJECTED: return <ShieldX className="text-red-500" size={16} />;
+      case MissionStatus.SUBMITTED: return <Clock className="text-blue-500" size={16} />;
+      default: return null;
+    }
+  };
+
+  const getStatusBgColor = (status: MissionStatus) => {
+    switch (status) {
+      case MissionStatus.VALIDATED: return 'bg-emerald-50/50';
+      case MissionStatus.REJECTED: return 'bg-red-50/50';
+      case MissionStatus.SUBMITTED: return 'bg-blue-50/50';
+      default: return 'hover:bg-slate-50/30';
+    }
+  };
+  
+  const weeklyGrandTotal = weeklyTotals.work + weeklyTotals.travel + weeklyTotals.overtime;
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
@@ -308,41 +377,158 @@ const TechnicianDashboard: React.FC<Props> = ({ user, missions, week, onUpdateMi
         </div>
       )}
 
-      {/* PLANNING */}
+      {/* PLANNING / CARTE */}
       {onlyPlanningView && (
-        <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl overflow-hidden print:hidden">
-           <table className="w-full text-left">
-              <thead className="bg-slate-50 border-b">
-                 <tr className="text-[10px] font-black uppercase text-slate-400 tracking-widest"><th className="px-8 py-5">Jour</th><th className="px-8 py-5">Affaire</th><th className="px-8 py-5 text-center">Heures</th><th className="px-8 py-5 text-center">Actions</th></tr>
-              </thead>
-              <tbody className="divide-y">
-                 {localMissions.map((m, idx) => {
-                    const sun = isSunday(new Date(m.date));
-                    const hasResponse = responses.some(r => r.missionId === m.id);
-                    return (
-                      <tr key={m.id} className={`${sun ? 'bg-slate-50/50' : 'hover:bg-slate-50/30'}`}>
-                         <td className="px-8 py-6">{idx % 2 === 0 && <span className="text-sm font-black text-slate-800 capitalize">{formatFrenchDate(new Date(m.date))}</span>}</td>
-                         <td className="px-8 py-6">{!sun && <input type="text" placeholder="N° AFFAIRE" value={m.jobNumber} onChange={e => onUpdateMissions([{...m, jobNumber: e.target.value.toUpperCase()}])} className="w-full max-w-[140px] p-4 bg-slate-50 border border-slate-200 rounded-2xl font-black text-sm outline-none focus:ring-2 focus:ring-indigo-500" />}</td>
-                         <td className="px-8 py-6 text-center">{!sun && <input type="number" step="0.5" value={m.hours || ''} onChange={e => onUpdateMissions([{...m, hours: parseFloat(e.target.value) || 0}])} className="w-20 p-4 bg-slate-50 border border-slate-200 rounded-2xl font-black text-sm text-center outline-none" />}</td>
-                         <td className="px-8 py-6 text-center">
-                            {!sun && m.jobNumber && (
-                               <div className="flex items-center justify-center gap-2">
-                                  {m.address && (
-                                     <a href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(m.address)}`} target="_blank" rel="noopener noreferrer" className="p-4 rounded-2xl bg-slate-100 text-slate-400 hover:text-blue-600 transition-all" title="Itinéraire">
-                                        <MapPin />
-                                     </a>
-                                  )}
-                                  <button onClick={() => handleOpenForm(m)} className={`p-4 rounded-2xl transition-all ${hasResponse ? 'bg-emerald-600 text-white shadow-lg' : 'bg-slate-100 text-slate-400 hover:text-indigo-600'}`} title="Remplir PV">
-                                     {hasResponse ? <CheckCircle2 /> : <FileText />}
-                                  </button>
-                               </div>
-                            )}
-                         </td>
-                      </tr>
-                    );
-                 })}
-              </tbody>
-           </table>
+        <div className="space-y-4">
+            {/* Toggle Vue */}
+            <div className="flex justify-end gap-2 print:hidden">
+                <button 
+                    onClick={() => setViewMode('LIST')} 
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase transition-all ${viewMode === 'LIST' ? 'bg-slate-800 text-white shadow-lg' : 'bg-white text-slate-400 hover:bg-slate-100'}`}
+                >
+                    <List size={16} /> Liste
+                </button>
+                <button 
+                    onClick={() => setViewMode('MAP')} 
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase transition-all ${viewMode === 'MAP' ? 'bg-indigo-600 text-white shadow-lg' : 'bg-white text-slate-400 hover:bg-slate-100'}`}
+                >
+                    <Map size={16} /> Carte / Itinéraire
+                </button>
+            </div>
+
+            {viewMode === 'LIST' ? (
+                /* VUE LISTE (TABLEAU) */
+                <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl overflow-x-auto print:hidden">
+                    <table className="w-full text-left min-w-[1000px]">
+                        <thead className="bg-slate-50 border-b">
+                            <tr className="text-[10px] font-black uppercase text-slate-400 tracking-widest">
+                                <th className="px-4 py-5 w-48">Jour</th>
+                                <th className="px-4 py-5">Affaire</th>
+                                <th className="px-2 py-5 text-center w-24">H. Travail</th>
+                                <th className="px-2 py-5 text-center w-24">H. Trajet</th>
+                                <th className="px-2 py-5 text-center w-24">H. Sup</th>
+                                <th className="px-2 py-5 text-center w-24">H. Total</th>
+                                <th className="px-2 py-5 text-center w-20">IGD</th>
+                                <th className="px-4 py-5 text-center">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                            {localMissions.map((m, idx) => {
+                                const sun = isSunday(new Date(m.date));
+                                const hasResponse = responses.some(r => r.missionId === m.id);
+                                const isLocked = m.status === MissionStatus.VALIDATED || m.status === MissionStatus.REJECTED;
+                                const missionTotal = (m.workHours || 0) + (m.travelHours || 0) + (m.overtimeHours || 0);
+                                const dayKey = m.date.split('T')[0];
+                                const dayTotal = dailyTotals[dayKey] || 0;
+                                
+                                return (
+                                <tr key={m.id} className={`${sun ? 'bg-slate-50/50' : getStatusBgColor(m.status)}`}>
+                                    <td className="px-4 py-4 relative align-top">
+                                    {idx % 2 === 0 && <span className="text-sm font-black text-slate-800 capitalize">{formatFrenchDate(new Date(m.date))}</span>}
+                                    {m.status === MissionStatus.REJECTED && m.rejectionComment && <div className="absolute top-2 left-4 text-[10px] text-red-600 font-bold italic truncate max-w-xs" title={m.rejectionComment}>Rejet: {m.rejectionComment}</div>}
+                                    </td>
+                                    <td className="px-4 py-2 align-top">
+                                    <div className="flex items-center gap-3">
+                                        {m.status !== MissionStatus.PENDING && getStatusIcon(m.status)}
+                                        {!sun && <input type="text" placeholder="N° AFFAIRE" value={m.jobNumber} disabled={isLocked} onChange={e => handleMissionChange(m.id, 'jobNumber', e.target.value.toUpperCase())} className="w-full max-w-[140px] p-3 bg-slate-50 border border-slate-200 rounded-xl font-black text-xs outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-200/50 disabled:cursor-not-allowed" />}
+                                    </div>
+                                    {m.description && !sun && <p className="text-[11px] text-slate-500 italic mt-1 ml-10 truncate max-w-xs" title={m.description}>{m.description}</p>}
+                                    </td>
+                                    <td className="px-2 py-2 text-center align-middle">{!sun && <input type="number" step="0.5" value={m.workHours || ''} disabled={isLocked} onChange={e => handleMissionChange(m.id, 'workHours', parseFloat(e.target.value) || 0)} className="w-20 p-3 bg-slate-50 border border-slate-200 rounded-xl font-black text-xs text-center outline-none disabled:bg-slate-200/50 disabled:cursor-not-allowed" />}</td>
+                                    <td className="px-2 py-2 text-center align-middle">{!sun && <input type="number" step="0.5" value={m.travelHours || ''} disabled={isLocked} onChange={e => handleMissionChange(m.id, 'travelHours', parseFloat(e.target.value) || 0)} className="w-20 p-3 bg-slate-50 border border-slate-200 rounded-xl font-black text-xs text-center outline-none disabled:bg-slate-200/50 disabled:cursor-not-allowed" />}</td>
+                                    <td className="px-2 py-2 text-center align-middle">{!sun && <input type="number" step="0.5" value={m.overtimeHours || ''} disabled={isLocked} onChange={e => handleMissionChange(m.id, 'overtimeHours', parseFloat(e.target.value) || 0)} className="w-20 p-3 bg-slate-50 border border-slate-200 rounded-xl font-black text-xs text-center outline-none disabled:bg-slate-200/50 disabled:cursor-not-allowed" />}</td>
+                                    <td className={`px-2 py-2 text-center align-middle font-black text-sm ${dayTotal > 11 ? 'text-red-500' : 'text-slate-700'}`}>{!sun && missionTotal > 0 ? `${missionTotal}h` : ''}</td>
+                                    <td className="px-2 py-2 text-center align-middle">{!sun && <input type="checkbox" checked={m.igd} disabled={isLocked} onChange={e => handleMissionChange(m.id, 'igd', e.target.checked)} className="w-6 h-6 rounded-md text-indigo-600 focus:ring-indigo-500 disabled:opacity-50" />}</td>
+                                    <td className="px-4 py-2 text-center align-middle">
+                                        {!sun && m.jobNumber && (
+                                            <div className="flex items-center justify-center gap-2">
+                                            {m.address && (
+                                                <a href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(m.address)}`} target="_blank" rel="noopener noreferrer" className="p-3 rounded-xl bg-slate-100 text-slate-400 hover:text-blue-600 transition-all" title="Itinéraire">
+                                                    <MapPin size={18}/>
+                                                </a>
+                                            )}
+                                            <button onClick={() => handleOpenForm(m)} className={`p-3 rounded-xl transition-all ${hasResponse ? 'bg-emerald-600 text-white shadow-lg' : 'bg-slate-100 text-slate-400 hover:text-indigo-600'}`} title="Remplir PV">
+                                                {hasResponse ? <CheckCircle2 size={18}/> : <FileText size={18}/>}
+                                            </button>
+                                            </div>
+                                        )}
+                                    </td>
+                                </tr>
+                                );
+                            })}
+                        </tbody>
+                        <tfoot className="bg-slate-800 text-white font-black uppercase text-xs tracking-widest">
+                            <tr>
+                                <td className="px-4 py-4" colSpan={2}>Total Semaine</td>
+                                <td className={`px-2 py-4 text-center ${weeklyTotals.work > 39 ? 'text-red-400 font-black' : ''}`}>{weeklyTotals.work}h</td>
+                                <td className="px-2 py-4 text-center">{weeklyTotals.travel}h</td>
+                                <td className="px-2 py-4 text-center">{weeklyTotals.overtime}h</td>
+                                <td className="px-2 py-4 text-center font-black text-lg">{weeklyGrandTotal}h</td>
+                                <td colSpan={2}></td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            ) : (
+                /* VUE CARTE (CARDS AVEC IFRAME) */
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {dates.filter(d => !isSunday(d)).map(date => {
+                         const daysMissions = localMissions.filter(m => isSameDay(new Date(m.date), date) && m.address && m.jobNumber);
+                         
+                         return (
+                             <div key={date.toISOString()} className="space-y-4">
+                                <div className="flex items-center gap-2">
+                                    <div className="w-2 h-2 rounded-full bg-indigo-600"></div>
+                                    <h3 className="font-black text-slate-800 uppercase text-sm">{formatFrenchDate(date)}</h3>
+                                </div>
+                                {daysMissions.length > 0 ? (
+                                    daysMissions.map(m => (
+                                        <div key={m.id} className="bg-white p-4 rounded-3xl border border-slate-200 shadow-sm hover:shadow-lg transition-all space-y-4">
+                                            <div className="flex justify-between items-start">
+                                                <div>
+                                                    <p className="text-xs font-black text-indigo-600 uppercase tracking-widest">{m.jobNumber}</p>
+                                                    <p className="text-sm font-bold text-slate-800 mt-1 line-clamp-2">{m.description || 'Pas de description'}</p>
+                                                </div>
+                                                <div className="p-2 bg-slate-50 rounded-lg text-slate-400">
+                                                    <MapPin size={16}/>
+                                                </div>
+                                            </div>
+                                            
+                                            {/* Carte Embed */}
+                                            <div className="w-full h-32 bg-slate-100 rounded-2xl overflow-hidden relative">
+                                                <iframe 
+                                                    width="100%" 
+                                                    height="100%" 
+                                                    frameBorder="0" 
+                                                    scrolling="no" 
+                                                    src={`https://maps.google.com/maps?q=${encodeURIComponent(m.address || '')}&t=&z=13&ie=UTF8&iwloc=&output=embed`}
+                                                    className="opacity-80 hover:opacity-100 transition-opacity"
+                                                ></iframe>
+                                            </div>
+                                            
+                                            <div className="space-y-2">
+                                                <p className="text-xs text-slate-500 font-medium px-1 truncate"><MapPin size={12} className="inline mr-1"/>{m.address}</p>
+                                                <a 
+                                                    href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(m.address || '')}`} 
+                                                    target="_blank" 
+                                                    rel="noopener noreferrer"
+                                                    className="flex items-center justify-center gap-2 w-full py-3 bg-blue-600 text-white rounded-xl font-black uppercase text-xs shadow-lg shadow-blue-200 hover:bg-blue-700 transition-all active:scale-95"
+                                                >
+                                                    <Navigation size={16} /> Lancer le GPS
+                                                </a>
+                                            </div>
+                                        </div>
+                                    ))
+                                ) : (
+                                    <div className="p-6 rounded-3xl border-2 border-dashed border-slate-100 text-center">
+                                        <p className="text-xs font-black text-slate-300 uppercase">Aucun déplacement prévu</p>
+                                    </div>
+                                )}
+                             </div>
+                         );
+                    })}
+                </div>
+            )}
         </div>
       )}
       
