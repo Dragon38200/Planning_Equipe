@@ -1,57 +1,83 @@
 
-import { Mission, MissionType, MissionStatus } from './types';
+import { kv } from '@vercel/kv';
+import { User, Mission, FormTemplate, FormResponse, AppSettings } from '../types';
+import { DEFAULT_ADMIN, INITIAL_MANAGERS, INITIAL_TECHNICIANS, DEFAULT_TEMPLATES } from '../constants';
+import { getInitialMissions } from '../data';
 
-const missionsCSVData = `1;02/02/2026;AG A25-0110;aloui.b;8;NON;WAGA Energy;
-1;03/02/2026;AG A25-1129;aloui.b;8;NON;PRODEVAL ;588 Rue Elsa Triolet, 69360 Communay
-1;04/02/2026;AG A25-1129;aloui.b;8;NON;PRODEVAL ;588 Rue Elsa Triolet, 69360 Communay
-1;05/02/2026;HS A26-0014;aloui.b;8;NON;TLSP;402 Rue Pierre Cot, 69800 Venissieux
-1;06/02/2026;HS A26-0014;aloui.b;7;NON;TLSP;402 Rue Pierre Cot, 69800 Venissieux
-4;02/02/2026;AG A26-0089;aloui.r;8;NON;PRODEVAL ;588 Rue Elsa Triolet, 69360 Communay
-4;03/02/2026;AG A26-0089;aloui.r;8;NON;PRODEVAL ;588 Rue Elsa Triolet, 69360 Communay
-4;04/02/2026;AG A26-0089;aloui.r;8;NON;PRODEVAL ;588 Rue Elsa Triolet, 69360 Communay
-4;05/02/2026;AG A26-0022;aloui.r;8;NON;PRODEVAL;588 Rue Elsa Triolet, 69360 Communay
-4;06/02/2026;Conge;aloui.r;7;NON;CONGE;27 ZAC de Chassagne, 69360 Ternay
-7;02/02/2026;AG A26-0022;assensi.e;8;NON;PRODEVAL;588 Rue Elsa Triolet, 69360 Communay
-7;03/02/2026;HS A25-0861;assensi.e;8;NON;Ste GERMAIN;27 ZAC de Chassagne, 69360 Ternay
-7;04/02/2026;HS A25-0861;assensi.e;8;NON;Ste GERMAIN;27 ZAC de Chassagne, 69360 Ternay
-7;05/02/2026;AG A26-0022;assensi.e;8;NON;PRODEVAL;588 Rue Elsa Triolet, 69360 Communay
-7;06/02/2026;AG A26-0022;assensi.e;7;NON;PRODEVAL;588 Rue Elsa Triolet, 69360 Communay
-10;02/02/2026;FG A25-1147;bechaa.a;8;NON;VEOLIA;402 Rue Pierre Cot, 69800 Venissieux
-10;03/02/2026;SD I26-0003;bechaa.a;8;NON;EPL;7 Rue d'Arles, 69007 Lyon
-10;04/02/2026;CME0101;bechaa.a;8;NON;TOTAL ACS;3 Place du Bassin, 69700 Givors
-10;05/02/2026;CME0101;bechaa.a;8;NON;TOTAL ACS;3 Place du Bassin, 69700 Givors`;
+interface AppData {
+  users: User[];
+  missions: Mission[];
+  templates: FormTemplate[];
+  responses: FormResponse[];
+  appSettings: AppSettings;
+}
 
-export const getInitialMissions = (): Mission[] => {
-    return missionsCSVData.split('\n').map((line, i) => {
-        const parts = line.trim().split(';');
-        if (parts.length < 7) return null;
+const DATABASE_KEY = 'planit-mounier-db';
 
-        const dateParts = parts[1].split('/');
-        if (dateParts.length !== 3) return null;
-        const date = new Date(parseInt(dateParts[2]), parseInt(dateParts[1]) - 1, parseInt(dateParts[0]));
+function getInitialData(): AppData {
+  return {
+    missions: getInitialMissions(),
+    users: [DEFAULT_ADMIN, ...INITIAL_MANAGERS, ...INITIAL_TECHNICIANS],
+    templates: DEFAULT_TEMPLATES,
+    responses: [],
+    appSettings: { appName: 'PLANIT-MOUNIER', appLogoUrl: '' }
+  };
+}
 
-        const jobNumber = parts[2].trim().toUpperCase();
-        let missionType = MissionType.WORK;
-        if (jobNumber.includes('CONGE')) missionType = MissionType.LEAVE;
-        
-        const description = parts[6] ? parts[6].trim() : '';
-        const address = parts[7] ? parts[7].trim() : '';
-        
-        const mission: Mission = {
-            id: `mission-initial-${i}-${parts[3].trim()}`,
-            date: date.toISOString(),
-            jobNumber: jobNumber,
-            workHours: parseFloat(parts[4]) || 0,
-            travelHours: 0,
-            overtimeHours: 0,
-            type: missionType,
-            status: MissionStatus.SUBMITTED,
-            technicianId: parts[3].trim(),
-            managerInitials: 'RG', // Default manager
-            igd: parts[5].toUpperCase() === 'OUI',
-            description: description,
-            address: address,
-        };
-        return mission;
-    }).filter((m): m is Mission => m !== null);
+export default async function handler(request: Request) {
+  try {
+    if (request.method === 'GET') {
+      let data: AppData | null = await kv.get(DATABASE_KEY);
+      
+      if (!data) {
+        console.log("No data found in KV, serving initial data.");
+        data = getInitialData();
+        // Optionnel : sauvegarder les données initiales si elles n'existent pas.
+        await kv.set(DATABASE_KEY, data);
+      }
+      
+      return new Response(JSON.stringify(data), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (request.method === 'POST') {
+      const body: AppData = await request.json();
+
+      // Valider les données reçues (vérification simple)
+      if (!body.users || !body.missions) {
+        return new Response(JSON.stringify({ error: 'Invalid data structure' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      await kv.set(DATABASE_KEY, body);
+      
+      return new Response(JSON.stringify({ success: true, message: 'Data saved successfully.' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Gérer les autres méthodes HTTP
+    return new Response(JSON.stringify({ error: `Method ${request.method} Not Allowed` }), {
+      status: 405,
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+  } catch (error) {
+    console.error('API Error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
+    return new Response(JSON.stringify({ error: 'Internal Server Error', details: errorMessage }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+// Configuration pour Vercel pour s'assurer que c'est une fonction Edge
+export const config = {
+  runtime: 'edge',
 };
