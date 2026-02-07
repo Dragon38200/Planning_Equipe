@@ -17,6 +17,9 @@ import { jsPDF } from 'jspdf';
 // @ts-ignore
 import JSZip from 'jszip';
 
+// LOCAL STORAGE IMPORTS (Replacing Firebase)
+import { COLL_USERS, COLL_MISSIONS, COLL_TEMPLATES, COLL_RESPONSES, COLL_SETTINGS, saveDocument, deleteDocument, batchSaveMissions, seedDatabaseIfEmpty, subscribe } from './firebase';
+
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = React.useState<User | null>(null);
   const [missions, setMissions] = React.useState<Mission[]>([]);
@@ -38,85 +41,106 @@ const App: React.FC = () => {
 
   // --- GLOBAL FORM STATE ---
   const [globalFormTemplate, setGlobalFormTemplate] = useState<FormTemplate | null>(null);
-  
-  // --- NOUVELLE LOGIQUE DE GESTION DES DONNÉES (BACKEND) ---
 
-  const saveDataToBackend = useCallback((data: { missions: Mission[], users: User[], templates: FormTemplate[], responses: FormResponse[], appSettings: AppSettings }) => {
-    fetch('/api/data', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    }).catch(err => console.error("Failed to save data:", err));
-  }, []);
+  // --- INITIALISATION & LISTENERS LOCAL STORAGE ---
+  useEffect(() => {
+    setIsLoading(true);
 
-  const debouncedSave = React.useRef(
-    // Simple debounce function
-    ((func: Function, delay: number) => {
-      // Fix: Replaced NodeJS.Timeout with ReturnType<typeof setTimeout> for browser compatibility.
-      let timeout: ReturnType<typeof setTimeout>;
-      return (...args: any) => {
-        clearTimeout(timeout);
-        timeout = setTimeout(() => func(...args), delay);
-      };
-    })(saveDataToBackend, 1500)
-  ).current;
-
-  // Effet pour charger les données initiales depuis le backend
-  React.useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setIsLoading(true);
-        const res = await fetch('/api/data');
-        if (!res.ok) throw new Error(`Server responded with ${res.status}`);
-        const data = await res.json();
-        setMissions(data.missions || []);
-        setUsers(data.users || []);
-        setTemplates(data.templates || []);
-        setResponses(data.responses || []);
-        setAppSettings(data.appSettings || { appName: 'PLANIT-MOUNIER' });
-      } catch (e) {
-        console.warn("API unavailable, loading local defaults:", e);
-        // Fallback: Charge les données locales si l'API échoue
-        setMissions(getInitialMissions());
-        setUsers([DEFAULT_ADMIN, ...INITIAL_MANAGERS, ...INITIAL_TECHNICIANS]);
-        setTemplates(DEFAULT_TEMPLATES);
-        setResponses([]);
-        setAppSettings({ appName: 'PLANIT-MOUNIER', appLogoUrl: '' });
-        setError(null); // Pas d'erreur bloquante
-      } finally {
-        setIsLoading(false);
-      }
+    // 1. Initialiser les données par défaut si la DB est vide
+    const initDb = async () => {
+        try {
+            await seedDatabaseIfEmpty(
+                [DEFAULT_ADMIN, ...INITIAL_MANAGERS, ...INITIAL_TECHNICIANS],
+                DEFAULT_TEMPLATES,
+                getInitialMissions()
+            );
+        } catch (e) {
+            console.error("Erreur seeding:", e);
+        }
     };
-    fetchData();
+    initDb();
+
+    // 2. Créer les listeners (abonnements aux changements locaux)
+    const unsubUsers = subscribe(COLL_USERS, (data) => setUsers(data as User[]));
+    const unsubMissions = subscribe(COLL_MISSIONS, (data) => setMissions(data as Mission[]));
+    const unsubTemplates = subscribe(COLL_TEMPLATES, (data) => setTemplates(data as FormTemplate[]));
+    const unsubResponses = subscribe(COLL_RESPONSES, (data) => setResponses(data as FormResponse[]));
+    const unsubSettings = subscribe(COLL_SETTINGS, (data) => {
+        const config = data.find((d: any) => d.id === 'app_config');
+        if (config) setAppSettings(config as AppSettings);
+        else setAppSettings({ appName: 'PLANIT-MOUNIER', appLogoUrl: '' });
+        
+        // Tout est chargé
+        setIsLoading(false);
+    });
+
+    // Cleanup au démontage
+    return () => {
+        unsubUsers();
+        unsubMissions();
+        unsubTemplates();
+        unsubResponses();
+        unsubSettings();
+    };
   }, []);
 
-  // Effet pour sauvegarder les changements sur le backend
-  React.useEffect(() => {
-    // Ne pas sauvegarder pendant le chargement initial pour éviter d'écraser avec un état vide
-    if (!isLoading) {
-      debouncedSave({ missions, users, templates, responses, appSettings });
-    }
-  }, [missions, users, templates, responses, appSettings, isLoading, debouncedSave]);
+  // --- HANDLERS ACTIONS ---
 
-  const handleUpdateUsers = (newUsers: User[], oldId?: string, newId?: string) => {
+  const handleUpdateUsers = async (newUsers: User[], oldId?: string, newId?: string) => {
+    // Cas modification ID : Suppression ancien doc, création nouveau
     if (oldId && newId && oldId !== newId) {
-        const updatedMissions = missions.map(mission => {
-            if (mission.technicianId === oldId) {
-                return { ...mission, technicianId: newId };
-            }
-            return mission;
-        });
-        setMissions(updatedMissions);
+        await deleteDocument(COLL_USERS, oldId);
+        
+        // Mettre à jour les missions liées
+        const userMissions = missions.filter(m => m.technicianId === oldId);
+        const updatedMissions = userMissions.map(m => ({ ...m, technicianId: newId }));
+        if (updatedMissions.length > 0) {
+            await batchSaveMissions(updatedMissions);
+        }
     }
-    setUsers(newUsers); 
+
+    const promises = newUsers.map(u => saveDocument(COLL_USERS, u.id, u));
+    await Promise.all(promises);
   };
   
-  const handleSaveResponse = (response: FormResponse) => { setResponses(prev => [...prev.filter(r => r.id !== response.id), response]); };
-  const handleUpdateTemplates = (newTemplates: FormTemplate[]) => setTemplates(newTemplates);
-  const handleAppendMissions = (newMissions: Mission[]) => { setMissions(prev => [...prev, ...newMissions]); };
-  const updateMissions = (m: Mission[]) => { const ids = new Set(m.map(mi => mi.id)); setMissions(prev => [...prev.filter(mi => !ids.has(mi.id)), ...m]); };
-  const removeMissionById = (id: string) => setMissions(prev => prev.filter(m => m.id !== id));
+  const handleSaveResponse = async (response: FormResponse) => {
+      await saveDocument(COLL_RESPONSES, response.id, response);
+  };
+
+  const handleUpdateTemplates = async (newTemplates: FormTemplate[]) => {
+      // Identifier les supprimés
+      const currentIds = templates.map(t => t.id);
+      const newIds = newTemplates.map(t => t.id);
+      const toDelete = currentIds.filter(id => !newIds.includes(id));
+      
+      const promises = [];
+      // Suppression
+      for (const id of toDelete) {
+          promises.push(deleteDocument(COLL_TEMPLATES, id));
+      }
+      // Sauvegarde/Mise à jour
+      for (const t of newTemplates) {
+          promises.push(saveDocument(COLL_TEMPLATES, t.id, t));
+      }
+      await Promise.all(promises);
+  };
+
+  const handleAppendMissions = async (newMissions: Mission[]) => {
+      await batchSaveMissions(newMissions);
+  };
+
+  const updateMissions = async (m: Mission[]) => {
+      await batchSaveMissions(m);
+  };
+
+  const removeMissionById = async (id: string) => {
+      await deleteDocument(COLL_MISSIONS, id);
+  };
   
+  const updateAppSettings = async (settings: AppSettings) => {
+      await saveDocument(COLL_SETTINGS, 'app_config', settings);
+  };
+
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     const user = users.find(u => u.id === loginId);
@@ -156,7 +180,7 @@ const App: React.FC = () => {
         <Loader2 size={64} className="animate-spin text-indigo-400" />
         <div className="text-center">
             <h1 className="text-3xl font-black uppercase tracking-tight">Chargement de l'application</h1>
-            <p className="text-indigo-200/70 mt-2">Connexion à la base de données...</p>
+            <p className="text-indigo-200/70 mt-2">Démarrage...</p>
         </div>
       </div>
     );
@@ -336,7 +360,7 @@ const App: React.FC = () => {
               users={users} 
               onUpdateUsers={handleUpdateUsers} 
               appSettings={appSettings} 
-              onUpdateAppSettings={setAppSettings} 
+              onUpdateAppSettings={updateAppSettings} 
               missions={missions} 
               onAppendMissions={handleAppendMissions} 
             />
@@ -510,563 +534,6 @@ const SharedFormModal: React.FC<SharedFormModalProps> = ({ user, template, users
     );
 };
 
-const GlobalFormsHistory: React.FC<{ responses: FormResponse[], templates: FormTemplate[], users: User[], appSettings?: AppSettings }> = ({ responses, templates, users, appSettings }) => {
-  const [selectedResponse, setSelectedResponse] = React.useState<FormResponse | null>(null);
-  const [isExporting, setIsExporting] = React.useState(false);
-  const [isSendingEmail, setIsSendingEmail] = React.useState(false);
-  const sortedResponses = [...responses].sort((a,b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
-
-  // --- LOGIQUE D'IMPRESSION (V3 - NOUVELLE FENÊTRE) ---
-  const handlePrint = () => {
-    const reportElement = document.getElementById('printable-report');
-    if (!reportElement) return;
-
-    const printWindow = window.open('', '_blank', 'height=800,width=800');
-    if (!printWindow) { alert("Le navigateur a bloqué l'ouverture de la fenêtre d'impression."); return; }
-    
-    printWindow.document.write('<html><head><title>Impression Rapport</title>');
-    printWindow.document.write('<script src="https://cdn.tailwindcss.com"><\/script>');
-    printWindow.document.write('<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet">');
-    printWindow.document.write('<style>body { font-family: "Inter", sans-serif; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; } @page { size: A4; margin: 15mm; }</style>');
-    printWindow.document.write('</head><body>');
-    printWindow.document.write(reportElement.innerHTML);
-    printWindow.document.write('<script>setTimeout(() => { window.print(); window.close(); }, 500);</script>');
-    printWindow.document.write('</body></html>');
-    printWindow.document.close();
-  };
-  
-  const handleSendEmail = async () => {
-    if (!selectedResponse) return;
-    const defaultEmail = selectedResponse.data.client_email || selectedResponse.data.dest_emails || '';
-    const emailTo = prompt("Adresse email du destinataire :", defaultEmail);
-    if (!emailTo) return;
-
-    setIsSendingEmail(true);
-
-    try {
-        // --- 1. GÉNÉRATION DU PDF (via html2canvas + jsPDF) ---
-        const reportElement = document.getElementById('printable-report');
-        if (!reportElement) throw new Error("Élément de rapport introuvable pour la génération PDF.");
-
-        // Création d'un clone pour capture complète (hors scroll)
-        const clone = reportElement.cloneNode(true) as HTMLElement;
-        
-        // Configuration du clone pour l'impression (Largeur A4 approximative à 96DPI)
-        clone.style.width = '794px'; 
-        clone.style.position = 'absolute';
-        clone.style.top = '-10000px';
-        clone.style.left = '0';
-        clone.style.height = 'auto';
-        clone.style.overflow = 'visible';
-        clone.style.maxHeight = 'none'; // S'assurer qu'il n'y a pas de contrainte
-        clone.classList.remove('overflow-y-auto', 'flex-1'); // Retirer les classes de scroll
-        
-        document.body.appendChild(clone);
-
-        // On utilise html2canvas pour capturer le rendu visuel
-        const canvas = await html2canvas(clone, { 
-            scale: 2, // Meilleure qualité pour l'impression
-            useCORS: true, // Pour gérer les images externes si besoin
-            logging: false,
-            windowWidth: 794 // Force la largeur de capture
-        });
-        
-        // Nettoyage du DOM
-        document.body.removeChild(clone);
-
-        const imgData = canvas.toDataURL('image/jpeg', 0.85); // Compression JPEG 85%
-        const pdf = new jsPDF('p', 'mm', 'a4');
-        const imgWidth = 210; // A4 width mm
-        const pageHeight = 297; // A4 height mm
-        const imgHeight = (canvas.height * imgWidth) / canvas.width;
-        let heightLeft = imgHeight;
-        let position = 0;
-
-        // Première page
-        pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
-        heightLeft -= pageHeight;
-
-        // Pages suivantes si le contenu dépasse
-        while (heightLeft > 0) {
-            position = heightLeft - imgHeight;
-            pdf.addPage();
-            pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
-            heightLeft -= pageHeight;
-        }
-
-        const pdfBase64 = pdf.output('datauristring').split(',')[1]; // On retire le préfixe data:application/pdf;base64,
-
-        // --- 2. CONSTRUCTION DU CORPS DU MAIL HTML ---
-        const template = templates.find(t => t.id === selectedResponse.templateId);
-        let htmlContent = `<div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto;">`;
-        htmlContent += `<h2 style="color: #4F46E5;">${template?.name} - ${selectedResponse.data.job_number || 'N/A'}</h2>`;
-        htmlContent += `<p><strong>Client :</strong> ${selectedResponse.data.client_name || 'N/A'}</p>`;
-        htmlContent += `<p><strong>Date :</strong> ${format(new Date(selectedResponse.submittedAt), 'dd/MM/yyyy HH:mm')}</p>`;
-        htmlContent += `<hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;"/>`;
-        htmlContent += `<p>Veuillez trouver ci-joint le rapport d'intervention au format PDF.</p>`;
-        htmlContent += `<br/><p style="font-size: 12px; color: #888;"><em>Document généré automatiquement par l'application Planit-Mounier.</em></p></div>`;
-
-        // --- 3. APPEL API ---
-        const res = await fetch('/api/send-email', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                to: emailTo,
-                subject: `Rapport Intervention: ${selectedResponse.data.job_number || 'N/A'} - ${selectedResponse.data.client_name || 'Client'}`,
-                html: htmlContent,
-                attachments: [
-                    {
-                        filename: `Rapport_${selectedResponse.data.job_number || 'Intervention'}.pdf`,
-                        content: pdfBase64
-                    }
-                ]
-            })
-        });
-        
-        const result = await res.json();
-
-        if (res.ok) {
-             alert(`Email envoyé avec succès à ${emailTo} avec le PDF en pièce jointe !`);
-        } else {
-             console.error("Erreur Resend:", result);
-             alert(`Erreur lors de l'envoi : ${result.error || 'Erreur inconnue'}`);
-        }
-
-    } catch (e) {
-        console.error("Erreur API Email:", e);
-        alert(`Erreur technique lors de l'envoi de l'email. Veuillez réessayer.`);
-    } finally {
-        setIsSendingEmail(false);
-    }
-  };
-
-  const handleDownloadPhotos = async (response: FormResponse) => {
-      const template = templates.find(t => t.id === response.templateId);
-      if (!template) return;
-
-      const zip = new JSZip();
-      let photoCount = 0;
-
-      // Parcourir les champs pour trouver les photos
-      template.fields.forEach(field => {
-          if (field.type === 'photo') {
-              const data = response.data[field.id];
-              if (data && typeof data === 'string' && data.startsWith('data:image')) {
-                  const extension = data.substring("data:image/".length, data.indexOf(";base64"));
-                  zip.file(`${field.label.replace(/\s+/g, '_')}.${extension}`, data.split(',')[1], {base64: true});
-                  photoCount++;
-              }
-          } else if (field.type === 'photo_gallery') {
-              const data = response.data[field.id]; // Array of strings
-              if (Array.isArray(data)) {
-                  data.forEach((imgStr, idx) => {
-                      if (typeof imgStr === 'string' && imgStr.startsWith('data:image')) {
-                          const extension = imgStr.substring("data:image/".length, imgStr.indexOf(";base64"));
-                          zip.file(`${field.label.replace(/\s+/g, '_')}_${idx+1}.${extension}`, imgStr.split(',')[1], {base64: true});
-                          photoCount++;
-                      }
-                  });
-              }
-          }
-          // Pour les champs génériques qui pourraient être des photos (fallback)
-          else if (typeof response.data[field.id] === 'string' && String(response.data[field.id]).startsWith('data:image')) {
-             // Avoid duplicating if already handled
-          }
-      });
-
-      // Gestion des photos génériques hors template (si clés manuelles)
-      Object.entries(response.data).forEach(([key, val]) => {
-          if (key.includes('photo') && !template.fields.find(f => f.id === key)) {
-             if (typeof val === 'string' && val.startsWith('data:image')) {
-                  const extension = val.substring("data:image/".length, val.indexOf(";base64"));
-                  zip.file(`${key}.${extension}`, val.split(',')[1], {base64: true});
-                  photoCount++;
-             } else if (Array.isArray(val)) {
-                 val.forEach((v, i) => {
-                     if (typeof v === 'string' && v.startsWith('data:image')) {
-                        const extension = v.substring("data:image/".length, v.indexOf(";base64"));
-                        zip.file(`${key}_${i+1}.${extension}`, v.split(',')[1], {base64: true});
-                        photoCount++;
-                     }
-                 });
-             }
-          }
-      });
-
-      if (photoCount === 0) {
-          alert("Aucune photo trouvée dans ce rapport.");
-          return;
-      }
-
-      try {
-          const content = await zip.generateAsync({type:"blob"});
-          const url = URL.createObjectURL(content);
-          const link = document.createElement("a");
-          link.href = url;
-          link.download = `Photos_${response.data.job_number || 'Rapport'}.zip`;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          URL.revokeObjectURL(url);
-      } catch (e) {
-          console.error("Erreur ZIP:", e);
-          alert("Erreur lors de la création de l'archive ZIP.");
-      }
-  };
-
-  const handleExportResponseCSV = () => {
-    if (!selectedResponse) return;
-    const template = templates.find(t => t.id === selectedResponse.templateId);
-    if (!template) { alert("Modèle de formulaire introuvable."); return; }
-
-    const rowData: Record<string, any> = {
-      'ID_Rapport': selectedResponse.id,
-      'Date_Soumission': format(new Date(selectedResponse.submittedAt), 'yyyy-MM-dd HH:mm'),
-      'Technicien_ID': selectedResponse.technicianId,
-    };
-
-    template.fields.forEach(field => {
-        let value = selectedResponse.data[field.id];
-        if (field.type === 'checkbox') {
-            if (field.id === 'acceptance_type') value = value ? 'SANS RÉSERVE' : 'AVEC RÉSERVE(S)';
-            else value = value ? 'OUI' : 'NON';
-        } else if (field.type === 'signature') {
-            value = value ? '[SIGNATURE FOURNIE]' : '[NON SIGNÉ]';
-        } else if (field.type === 'photo_gallery') {
-            value = Array.isArray(value) ? `[${value.length} Photos]` : '';
-        }
-        const headerKey = field.label.normalize("NFD").replace(/[\u0000-\u001f\u007f-\u009f]/g, "").replace(/\s+/g, '_');
-        rowData[headerKey] = value || '';
-    });
-    
-    exportToCSV([rowData], `PV_AFFAIRE_${selectedResponse.data.job_number || selectedResponse.id.slice(-4)}.csv`);
-  };
-
-  const handleBulkExportCSV = (templateId: string) => {
-    const template = templates.find(t => t.id === templateId);
-    if (!template) { alert("Modèle introuvable."); return; }
-
-    const relevantResponses = responses.filter(r => r.templateId === templateId);
-    if (relevantResponses.length === 0) {
-        alert(`Aucun rapport de type "${template.name}" à exporter.`);
-        setIsExporting(false);
-        return;
-    }
-
-    const csvData = relevantResponses.map(response => {
-        const rowData: Record<string, any> = {
-            'ID_Rapport': response.id,
-            'Date_Soumission': format(new Date(response.submittedAt), 'yyyy-MM-dd HH:mm'),
-            'Technicien_ID': response.technicianId,
-            'Nom_Technicien': users.find(t => t.id === response.technicianId)?.name || '',
-        };
-
-        template.fields.forEach(field => {
-            let value = response.data[field.id];
-            if (field.type === 'checkbox') {
-                if (field.id === 'acceptance_type') value = value ? 'SANS RÉSERVE' : 'AVEC RÉSERVE(S)';
-                else value = value ? 'OUI' : 'NON';
-            } else if (field.type === 'signature') {
-                value = value ? '[SIGNATURE FOURNIE]' : '[NON SIGNÉ]';
-            } else if (field.type === 'photo_gallery') {
-                value = Array.isArray(value) ? `[${value.length} Photos]` : '';
-            }
-            const headerKey = field.label.normalize("NFD").replace(/[\u0000-\u001f\u007f-\u009f]/g, "").replace(/\s+/g, '_');
-            rowData[headerKey] = value || '';
-        });
-
-        return rowData;
-    });
-    
-    const safeTemplateName = template.name.replace(/[^a-zA-Z0-9]/g, '_');
-    exportToCSV(csvData, `EXPORT_${safeTemplateName}_${new Date().toISOString().split('T')[0]}.csv`);
-    setIsExporting(false);
-  };
-
-  const renderReportContent = () => {
-      if (!selectedResponse) return null;
-      const template = templates.find(t => t.id === selectedResponse.templateId);
-      
-      // HEADER COMMUN
-      const Header = () => (
-        <div className="flex justify-between items-start border-b-2 border-slate-900 pb-8 mb-8">
-            <div className="flex items-center gap-6">
-                <img src={appSettings?.reportLogoUrl || DEFAULT_APP_LOGO} alt="Logo" className="h-16 w-auto object-contain max-w-[200px]" />
-                <div>
-                    <h1 className="text-3xl font-black text-slate-900 uppercase leading-none mb-1">MOUNIER</h1>
-                    <p className="text-[10px] text-slate-500 font-black uppercase tracking-widest">CLIMATISATION - ELECTRICITE - PROCEDES INDUSTRIELS</p>
-                    <p className="text-[9px] text-slate-400 font-bold">27 Avenue ZAC de Chassagne - 69360 TERNAY</p>
-                </div>
-            </div>
-            <div className="text-right">
-                <p className="text-xl font-black text-indigo-600 uppercase tracking-tighter">{template?.name || 'Rapport'}</p>
-                <p className="text-xs font-black text-slate-800">N° {selectedResponse.id.slice(-6).toUpperCase()}</p>
-                <p className="text-xs font-black text-slate-800 uppercase tracking-tighter">Date : {format(new Date(selectedResponse.submittedAt), 'dd/MM/yyyy')}</p>
-            </div>
-        </div>
-      );
-
-      // --- TEMPLATE 1: PV DE RÉCEPTION (Classique) ---
-      if (selectedResponse.templateId === 'tpl-pv-rec-mounier') {
-          return (
-            <>
-               <Header />
-               <div className="grid grid-cols-2 gap-8">
-                  <div className="col-span-2 p-8 bg-slate-50 rounded-[2rem] border border-slate-100">
-                     <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4">Identification du chantier</p>
-                     <div className="grid grid-cols-2 gap-x-12 gap-y-6">
-                        <div><p className="text-[8px] font-black text-slate-400 uppercase">CLIENT</p><p className="text-sm font-black text-slate-900">{selectedResponse.data.client_name || '-'}</p></div>
-                        <div><p className="text-[8px] font-black text-slate-400 uppercase">ADRESSE CHANTIER</p><p className="text-sm font-black text-slate-900">{selectedResponse.data.address || '-'}</p></div>
-                        <div><p className="text-[8px] font-black text-slate-400 uppercase">N° COMMANDE</p><p className="text-sm font-black text-slate-900">{selectedResponse.data.cmd_number || '-'}</p></div>
-                        <div><p className="text-[8px] font-black text-slate-400 uppercase">N° D'AFFAIRE</p><p className="text-sm font-black text-slate-900">{selectedResponse.data.job_number || '-'}</p></div>
-                        <div className="col-span-2"><p className="text-[8px] font-black text-slate-400 uppercase">LIBELLÉ</p><p className="text-sm font-black text-slate-900">{selectedResponse.data.job_label || '-'}</p></div>
-                     </div>
-                  </div>
-                  <div className="col-span-2 p-6 border-2 border-slate-100 rounded-[2rem] flex items-center gap-6">
-                     <div className={`w-12 h-12 rounded-full flex items-center justify-center text-white font-black text-xl shadow-lg ${selectedResponse.data.acceptance_type ? 'bg-emerald-500 shadow-emerald-100' : 'bg-red-500 shadow-red-100'}`}>{selectedResponse.data.acceptance_type ? '✔' : '!'}</div>
-                     <div>
-                        <p className="text-lg font-black text-slate-900 uppercase leading-none mb-1">{selectedResponse.data.acceptance_type ? "Travaux acceptés sans réserve" : "Travaux acceptés avec réserve(s)"}</p>
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Date d'effet : {selectedResponse.data.date_effet || '-'}</p>
-                     </div>
-                  </div>
-                  {!selectedResponse.data.acceptance_type && (<div className="col-span-2 space-y-2"><p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] px-2">Détail des réserves</p><div className="p-6 bg-slate-50 border border-slate-100 rounded-[2rem] min-h-[100px] text-xs font-medium text-slate-700 whitespace-pre-wrap">{selectedResponse.data.reserves_list || 'Aucune réserve mentionnée.'}</div></div>)}
-                  <div className="col-span-1 space-y-4"><p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] px-2">Entrepreneur (Mounier)</p><div className="relative h-44 border-2 border-dashed border-slate-100 rounded-[2rem] flex flex-col items-center justify-center bg-slate-50/50 overflow-hidden">{selectedResponse.data.sig_entrepreneur && <img src={selectedResponse.data.sig_entrepreneur} alt="Signature Mounier" className="max-h-full max-w-full object-contain mix-blend-multiply" />}<p className="absolute bottom-4 text-[9px] font-black text-slate-400 uppercase">{selectedResponse.data.rep_mounier || '-'}</p></div></div>
-                  <div className="col-span-1 space-y-4"><p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] px-2">Client</p><div className="relative h-44 border-2 border-dashed border-slate-100 rounded-[2rem] flex flex-col items-center justify-center bg-slate-50/50 overflow-hidden">{selectedResponse.data.sig_client && <img src={selectedResponse.data.sig_client} alt="Signature Client" className="max-h-full max-w-full object-contain mix-blend-multiply" />}<p className="absolute bottom-4 text-[9px] font-black text-slate-400 uppercase">{selectedResponse.data.rep_client || '-'}</p></div></div>
-               </div>
-            </>
-          );
-      }
-
-      // --- TEMPLATE 2: COMPTE RENDU D'INTERVENTION ---
-      if (selectedResponse.templateId === 'tpl-compte-rendu') {
-          const manager = users.find(u => u.id === selectedResponse.data.manager_id);
-          return (
-            <>
-                <Header />
-                <div className="space-y-8">
-                    {/* Info Bloc 1 */}
-                    <div className="grid grid-cols-2 gap-8">
-                        <div className="p-6 bg-slate-50 rounded-[2rem] border border-slate-100 space-y-4">
-                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] border-b pb-2">Informations Affaire</p>
-                            <div className="space-y-3">
-                                <div><p className="text-[8px] font-black text-slate-400 uppercase">N° AFFAIRE</p><p className="text-sm font-black text-indigo-600">{selectedResponse.data.job_number}</p></div>
-                                <div><p className="text-[8px] font-black text-slate-400 uppercase">CLIENT</p><p className="text-sm font-bold text-slate-800">{selectedResponse.data.client_name}</p></div>
-                                <div><p className="text-[8px] font-black text-slate-400 uppercase">DÉSIGNATION</p><p className="text-sm font-bold text-slate-800">{selectedResponse.data.designation}</p></div>
-                                <div><p className="text-[8px] font-black text-slate-400 uppercase">ADRESSE</p><p className="text-xs font-medium text-slate-600">{selectedResponse.data.address}</p></div>
-                            </div>
-                        </div>
-                        <div className="p-6 bg-slate-50 rounded-[2rem] border border-slate-100 space-y-4">
-                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] border-b pb-2">Contacts</p>
-                            <div className="space-y-3">
-                                <div><p className="text-[8px] font-black text-slate-400 uppercase">CONTACT CLIENT</p><p className="text-sm font-bold text-slate-800">{selectedResponse.data.client_contact || '-'}</p><p className="text-xs text-slate-500">{selectedResponse.data.client_email}</p></div>
-                                <div className="pt-2 mt-2 border-t border-dashed border-slate-200">
-                                    <p className="text-[8px] font-black text-slate-400 uppercase">CHARGÉ D'AFFAIRE</p>
-                                    <p className="text-sm font-bold text-slate-800">{manager?.name || selectedResponse.data.manager_id}</p>
-                                    <p className="text-xs text-slate-500">{selectedResponse.data.manager_phone} • {selectedResponse.data.manager_email}</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Descriptif et Temps */}
-                    <div className="border-2 border-slate-100 rounded-[2rem] overflow-hidden">
-                        <div className="bg-slate-50 p-4 flex justify-between items-center border-b border-slate-100">
-                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em]">Intervention</p>
-                            <div className="flex gap-6">
-                                <div className="text-right"><span className="text-[9px] font-black text-slate-400 uppercase mr-2">Temps Trajet</span><span className="text-sm font-black text-slate-800">{selectedResponse.data.travel_time} h</span></div>
-                                <div className="text-right"><span className="text-[9px] font-black text-slate-400 uppercase mr-2">Temps Intervention</span><span className="text-sm font-black text-slate-800">{selectedResponse.data.work_time} h</span></div>
-                            </div>
-                        </div>
-                        <div className="p-8 min-h-[150px] text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">
-                            {selectedResponse.data.description}
-                        </div>
-                    </div>
-
-                    {/* Galerie Photos */}
-                    {Array.isArray(selectedResponse.data.photos) && selectedResponse.data.photos.length > 0 && (
-                        <div>
-                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 px-2">Photos du chantier</p>
-                            <div className="grid grid-cols-3 gap-4">
-                                {selectedResponse.data.photos.map((photo: string, idx: number) => (
-                                    <div key={idx} className="aspect-square rounded-2xl border border-slate-200 overflow-hidden bg-slate-50">
-                                        <img src={photo} alt={`Chantier ${idx}`} className="w-full h-full object-cover" />
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Signatures */}
-                    <div className="grid grid-cols-2 gap-8 pt-4">
-                        <div className="col-span-1 space-y-4">
-                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] px-2">Signature Technicien</p>
-                            <div className="relative h-32 border-2 border-dashed border-slate-200 rounded-[2rem] flex items-center justify-center bg-slate-50/50">
-                                {selectedResponse.data.sig_tech && <img src={selectedResponse.data.sig_tech} alt="Signature Tech" className="max-h-full max-w-full object-contain mix-blend-multiply" />}
-                            </div>
-                        </div>
-                        <div className="col-span-1 space-y-4">
-                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] px-2">Signature Client</p>
-                            <div className="relative h-32 border-2 border-dashed border-slate-200 rounded-[2rem] flex items-center justify-center bg-slate-50/50">
-                                {selectedResponse.data.sig_client && <img src={selectedResponse.data.sig_client} alt="Signature Client" className="max-h-full max-w-full object-contain mix-blend-multiply" />}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </>
-          );
-      }
-
-      // --- TEMPLATE GÉNÉRIQUE ---
-      return (
-          <>
-            <Header />
-            <div className="space-y-6">
-                {template?.fields.map(field => {
-                    const value = selectedResponse.data[field.id];
-                    if (field.type === 'signature') return null; // Handled at bottom
-                    if (field.type === 'photo' || field.type === 'photo_gallery') return null; // Handled separately
-                    
-                    return (
-                        <div key={field.id} className="border-b border-slate-100 pb-4">
-                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">{field.label}</p>
-                            <p className="text-sm font-medium text-slate-800 whitespace-pre-wrap">{field.type === 'checkbox' ? (value ? 'OUI' : 'NON') : (value || '-')}</p>
-                        </div>
-                    );
-                })}
-
-                {/* Generic Photos */}
-                {Object.keys(selectedResponse.data).some(k => k.includes('photo')) && (
-                     <div className="grid grid-cols-2 gap-4">
-                        {Object.entries(selectedResponse.data).filter(([k]) => k.includes('photo')).map(([key, val]) => (
-                            Array.isArray(val) ? val.map((v, i) => <img key={`${key}-${i}`} src={v} className="rounded-xl border" />) : <img key={key} src={val as string} className="rounded-xl border" />
-                        ))}
-                     </div>
-                )}
-
-                {/* Generic Signatures */}
-                <div className="grid grid-cols-2 gap-8 pt-8">
-                    {template?.fields.filter(f => f.type === 'signature').map(field => (
-                        <div key={field.id} className="space-y-2">
-                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{field.label}</p>
-                            <div className="h-32 border-2 border-dashed border-slate-200 rounded-2xl flex items-center justify-center">
-                                {selectedResponse.data[field.id] ? <img src={selectedResponse.data[field.id]} className="max-h-full" /> : <span className="text-xs text-slate-300">Non signé</span>}
-                            </div>
-                        </div>
-                    ))}
-                </div>
-            </div>
-          </>
-      );
-  };
-
-  return (
-    <div className="space-y-6 animate-in fade-in duration-500">
-      {/* Modale d'Export en masse */}
-      {isExporting && (
-        <div className="fixed inset-0 z-[250] bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-white w-full max-w-lg rounded-[2.5rem] shadow-2xl overflow-hidden animate-in zoom-in-95">
-                <div className="p-6 bg-slate-900 text-white flex justify-between items-center">
-                    <div className="flex items-center gap-3">
-                        <div className="p-2 bg-white/20 rounded-xl"><FileSpreadsheet size={20}/></div>
-                        <h2 className="text-lg font-black uppercase tracking-tight">Exporter les rapports</h2>
-                    </div>
-                    <button onClick={() => setIsExporting(false)} className="p-2 hover:bg-white/10 rounded-full transition-colors"><X /></button>
-                </div>
-                <div className="p-8 space-y-4">
-                    <p className="text-sm text-slate-600 font-medium text-center pb-2">Sélectionnez le type de rapport à exporter en masse :</p>
-                    {templates.map(template => (
-                        <button 
-                            key={template.id} 
-                            onClick={() => handleBulkExportCSV(template.id)}
-                            className="w-full p-6 bg-slate-50 border-2 border-slate-100 rounded-3xl hover:border-emerald-600 flex items-center justify-between transition-all group"
-                        >
-                            <div className="flex items-center gap-4 text-left">
-                                <div className="p-3 bg-white rounded-2xl text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white transition-all"><FileText /></div>
-                                <div>
-                                    <p className="font-black text-slate-800 uppercase text-xs">{template.name}</p>
-                                    <p className="text-[10px] text-slate-400 font-bold">{template.description}</p>
-                                </div>
-                            </div>
-                            <Download className="text-slate-400 group-hover:text-emerald-600" />
-                        </button>
-                    ))}
-                </div>
-            </div>
-        </div>
-      )}
-
-      {/* Modale de visualisation de rapport unique */}
-      {selectedResponse && (
-        <div className="fixed inset-0 z-[200] bg-slate-900/90 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-4xl rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[95vh] animate-in zoom-in-95">
-            <div className="p-6 bg-slate-900 text-white flex justify-between items-center shrink-0">
-               <div className="flex items-center gap-4">
-                  <div className="bg-blue-500 p-2.5 rounded-2xl text-white shadow-xl shadow-blue-500/20"><FileText size={20}/></div>
-                  <div><h2 className="text-lg font-black uppercase tracking-tight">Visualisation Rapport</h2><p className="text-[9px] font-black opacity-60 uppercase tracking-widest">Technicien: {users.find(t => t.id === selectedResponse.technicianId)?.name || 'N/A'}</p></div>
-               </div>
-               <div className="flex items-center gap-3">
-                  <button disabled={isSendingEmail} onClick={handleSendEmail} className={`px-5 py-3 rounded-xl text-[10px] font-black flex items-center gap-2 uppercase transition-all shadow-lg active:scale-95 ${isSendingEmail ? 'bg-slate-700 text-slate-400' : 'bg-slate-800 text-white hover:bg-slate-700'}`}>
-                      {isSendingEmail ? <Loader2 className="animate-spin" size={16}/> : <Mail size={16}/>} EMAIL (PDF)
-                  </button>
-                  <button onClick={handleExportResponseCSV} className="px-5 py-3 bg-emerald-600 text-white rounded-xl text-[10px] font-black flex items-center gap-2 uppercase hover:bg-emerald-700 transition-all shadow-lg active:scale-95"><FileSpreadsheet size={16}/> EXPORTER CSV</button>
-                  <button onClick={handlePrint} className="px-5 py-3 bg-indigo-600 text-white rounded-xl text-[10px] font-black flex items-center gap-2 uppercase hover:bg-indigo-700 transition-all shadow-lg active:scale-95"><Printer size={16}/> IMPRIMER PDF</button>
-                  <button onClick={() => setSelectedResponse(null)} className="p-2 hover:bg-white/10 rounded-full transition-colors"><X /></button>
-               </div>
-            </div>
-
-            {/* --- ZONE DU RAPPORT PROFESSIONNEL --- */}
-            <div id="printable-report" className="p-12 overflow-y-auto flex-1 bg-white">
-               {renderReportContent()}
-               <div className="mt-12 pt-8 border-t border-slate-100 text-center"><p className="text-[8px] text-slate-300 font-black uppercase tracking-[0.3em]">Document généré électroniquement par Plani-Mounier © {new Date().getFullYear()}</p></div>
-            </div>
-            <button onClick={() => setSelectedResponse(null)} className="m-8 py-5 bg-slate-900 text-white rounded-2xl font-black uppercase text-xs tracking-widest hover:bg-slate-800">Fermer la vue</button>
-          </div>
-        </div>
-      )}
-
-      <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl overflow-hidden">
-        <div className="p-8 border-b bg-slate-50/50 flex items-center justify-between">
-            <div className="flex items-center gap-4">
-                <div className="p-3 bg-blue-600 rounded-2xl text-white shadow-lg shadow-blue-100"><Search size={24}/></div>
-                <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">Historique des Rapports</h2>
-            </div>
-            <button onClick={() => setIsExporting(true)} className="px-5 py-3 bg-emerald-600 text-white rounded-xl text-[10px] font-black flex items-center gap-2 uppercase hover:bg-emerald-700 transition-all shadow-lg active:scale-95">
-                <FileSpreadsheet size={16}/> EXPORTER TOUT (CSV)
-            </button>
-        </div>
-        <div className="divide-y divide-slate-100">
-           {sortedResponses.map(r => {
-                const tech = users.find(u => u.id === r.technicianId);
-                const tpl = templates.find(t => t.id === r.templateId);
-                return (
-                    <div key={r.id} className="p-6 flex items-center justify-between group hover:bg-slate-50/50 transition-all">
-                        <div className="flex items-center gap-6">
-                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${r.data.acceptance_type ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>{r.data.acceptance_type ? <CheckCircle2 size={24}/> : <FileText size={24}/>}</div>
-                            <div>
-                                <div className="flex items-center gap-2 mb-1">
-                                    <p className="font-black text-slate-800 text-sm uppercase">{tpl?.name || 'Rapport'} • {r.data.job_number || 'N/A'}</p>
-                                    {r.data.client_name && <span className="px-2 py-0.5 bg-slate-100 rounded-md text-[9px] font-black text-slate-400 uppercase tracking-tighter">{r.data.client_name}</span>}
-                                </div>
-                                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">Le {format(new Date(r.submittedAt), 'Pp', {locale: fr})} par {tech?.name || r.technicianId}</p>
-                            </div>
-                        </div>
-                        <div className="flex gap-2">
-                             <button onClick={() => handleDownloadPhotos(r)} className="px-4 py-3 bg-white border border-slate-200 text-slate-400 rounded-xl text-[10px] font-black uppercase hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-all flex items-center gap-2 shadow-sm" title="Télécharger les photos (ZIP)">
-                                <ImageIcon size={16}/> <span className="hidden sm:inline">Photos</span>
-                            </button>
-                            <button onClick={() => setSelectedResponse(r)} className="px-6 py-3 bg-white border border-slate-200 text-slate-600 rounded-xl text-[10px] font-black uppercase hover:bg-indigo-600 hover:text-white hover:border-indigo-600 transition-all flex items-center gap-2 shadow-sm">
-                                <Eye size={16}/> Consulter / Imprimer
-                            </button>
-                        </div>
-                    </div>
-                );
-           })}
-        </div>
-      </div>
-    </div>
-  );
-};
-
 const FormTemplateManager: React.FC<{ templates: FormTemplate[], onUpdateTemplates: (t: FormTemplate[]) => void }> = ({ templates, onUpdateTemplates }) => {
   const [editingTemplate, setEditingTemplate] = React.useState<Partial<FormTemplate> | null>(null);
   const [previewingTemplate, setPreviewingTemplate] = React.useState<FormTemplate | null>(null);
@@ -1136,6 +603,110 @@ const FormTemplateManager: React.FC<{ templates: FormTemplate[], onUpdateTemplat
         </div>
       )}
     </div>
+  );
+};
+
+const GlobalFormsHistory: React.FC<{ responses: FormResponse[], templates: FormTemplate[], users: User[], appSettings: AppSettings }> = ({ responses, templates, users, appSettings }) => {
+  const [selectedResponse, setSelectedResponse] = useState<FormResponse | null>(null);
+  const [search, setSearch] = useState('');
+
+  const filtered = responses.filter(r => {
+      const t = templates.find(t => t.id === r.templateId);
+      const u = users.find(u => u.id === r.technicianId);
+      const searchStr = (search || '').toLowerCase();
+      return (
+          (t?.name || '').toLowerCase().includes(searchStr) ||
+          (u?.name || '').toLowerCase().includes(searchStr) ||
+          (r.data.job_number || '').toLowerCase().includes(searchStr)
+      );
+  }).sort((a,b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
+
+  // Placeholder PDF generation
+  const generatePDF = async (response: FormResponse) => {
+      alert("Fonctionnalité de téléchargement PDF à implémenter.");
+  };
+
+  return (
+      <div className="space-y-6">
+          {selectedResponse && (
+             <div className="fixed inset-0 z-[200] bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
+                <div className="bg-white w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-[2.5rem] p-8 relative animate-in zoom-in-95">
+                    <button onClick={() => setSelectedResponse(null)} className="absolute top-6 right-6 p-2 bg-slate-100 hover:bg-slate-200 rounded-full"><X/></button>
+                    <h2 className="text-2xl font-black text-slate-800 mb-6 uppercase">Détails du rapport</h2>
+                    <div className="space-y-4">
+                         {templates.find(t => t.id === selectedResponse.templateId)?.fields.map(field => (
+                             <div key={field.id} className="border-b border-slate-100 pb-2">
+                                 <p className="text-[10px] font-black text-slate-400 uppercase">{field.label}</p>
+                                 {field.type === 'signature' || field.type === 'photo' ? (
+                                     selectedResponse.data[field.id] ? <img src={selectedResponse.data[field.id]} alt={field.label} className="h-20 object-contain rounded-lg border border-slate-200" /> : <span className="text-xs italic text-slate-400">Non renseigné</span>
+                                 ) : field.type === 'photo_gallery' ? (
+                                      <div className="flex gap-2 flex-wrap">
+                                          {Array.isArray(selectedResponse.data[field.id]) && selectedResponse.data[field.id].map((img: string, i: number) => (
+                                              <img key={i} src={img} className="h-20 w-20 object-cover rounded-lg border border-slate-200" />
+                                          ))}
+                                      </div>
+                                 ) : (
+                                     <p className="text-sm font-bold text-slate-800">
+                                         {field.type === 'checkbox' 
+                                            ? (selectedResponse.data[field.id] ? 'OUI' : 'NON') 
+                                            : (selectedResponse.data[field.id]?.toString() || '-')}
+                                     </p>
+                                 )}
+                             </div>
+                         ))}
+                    </div>
+                    <div className="mt-8 pt-6 border-t flex gap-4">
+                        <button onClick={() => generatePDF(selectedResponse)} className="flex-1 py-4 bg-slate-900 text-white rounded-xl font-black uppercase text-xs">Télécharger PDF</button>
+                    </div>
+                </div>
+             </div>
+          )}
+
+          <div className="flex justify-between items-center bg-white p-8 rounded-[2rem] border border-slate-200 shadow-sm">
+             <div className="flex items-center gap-5">
+                 <div className="bg-blue-600 p-3 rounded-2xl text-white shadow-lg shadow-blue-200"><FileText size={28}/></div>
+                 <div><h2 className="text-2xl font-black text-slate-800">Historique des Rapports</h2><p className="text-slate-500 text-sm font-medium">Consultez et téléchargez les rapports envoyés.</p></div>
+             </div>
+             <div className="relative">
+                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20}/>
+                 <input type="text" placeholder="Rechercher..." value={search} onChange={e => setSearch(e.target.value)} className="pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:ring-2 focus:ring-indigo-500 w-64" />
+             </div>
+          </div>
+
+          <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl overflow-hidden">
+              <table className="w-full text-left">
+                  <thead className="bg-slate-50 border-b border-slate-100">
+                      <tr>
+                          <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Date</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Modèle</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Technicien</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Affaire / Info</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Actions</th>
+                      </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                      {filtered.map(r => {
+                          const t = templates.find(temp => temp.id === r.templateId);
+                          const u = users.find(user => user.id === r.technicianId);
+                          return (
+                              <tr key={r.id} className="hover:bg-slate-50/50 transition-colors">
+                                  <td className="px-6 py-4 font-bold text-sm text-slate-800">{format(new Date(r.submittedAt), 'dd/MM/yyyy HH:mm')}</td>
+                                  <td className="px-6 py-4 font-bold text-sm text-indigo-600">{t?.name || 'Inconnu'}</td>
+                                  <td className="px-6 py-4 font-bold text-sm text-slate-600">{u?.name || r.technicianId}</td>
+                                  <td className="px-6 py-4 text-xs font-bold text-slate-500 truncate max-w-xs">{r.data.job_number || r.data.client_name || '-'}</td>
+                                  <td className="px-6 py-4 text-right">
+                                      <button onClick={() => setSelectedResponse(r)} className="p-2 text-slate-400 hover:text-indigo-600 bg-slate-100 hover:bg-indigo-50 rounded-xl transition-all"><Eye size={18}/></button>
+                                  </td>
+                              </tr>
+                          );
+                      })}
+                      {filtered.length === 0 && (
+                          <tr><td colSpan={5} className="p-8 text-center text-slate-400 font-bold">Aucun rapport trouvé.</td></tr>
+                      )}
+                  </tbody>
+              </table>
+          </div>
+      </div>
   );
 };
 
