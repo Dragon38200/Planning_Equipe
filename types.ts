@@ -26,6 +26,7 @@ export interface User {
   role: Role;
   password?: string; 
   email?: string;
+  phone?: string; // Ajout du téléphone
   avatarUrl?: string;
 }
 
@@ -61,7 +62,7 @@ export interface WeekSelection {
 
 // --- Nouveaux types pour les Formulaires ---
 
-export type FieldType = 'text' | 'number' | 'checkbox' | 'date' | 'textarea' | 'signature';
+export type FieldType = 'text' | 'number' | 'checkbox' | 'date' | 'textarea' | 'signature' | 'email' | 'photo' | 'select' | 'photo_gallery';
 
 export interface FormField {
   id: string;
@@ -69,6 +70,8 @@ export interface FormField {
   type: FieldType;
   required: boolean;
   placeholder?: string;
+  options?: string[]; // Pour les listes déroulantes
+  readOnly?: boolean; // Pour les champs auto-remplis
 }
 
 export interface FormTemplate {
