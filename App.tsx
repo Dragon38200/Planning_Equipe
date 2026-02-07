@@ -548,19 +548,52 @@ const GlobalFormsHistory: React.FC<{ responses: FormResponse[], templates: FormT
         const reportElement = document.getElementById('printable-report');
         if (!reportElement) throw new Error("Élément de rapport introuvable pour la génération PDF.");
 
-        // On utilise html2canvas pour capturer le rendu visuel
-        const canvas = await html2canvas(reportElement, { 
-            scale: 1.5, // Qualité correcte sans être trop lourde
-            useCORS: true, // Pour gérer les images externes si besoin
-            logging: false
-        });
-
-        const imgData = canvas.toDataURL('image/jpeg', 0.8); // Compression JPEG 80%
-        const pdf = new jsPDF('p', 'mm', 'a4');
-        const pdfWidth = pdf.internal.pageSize.getWidth();
-        const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+        // Création d'un clone pour capture complète (hors scroll)
+        const clone = reportElement.cloneNode(true) as HTMLElement;
         
-        pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+        // Configuration du clone pour l'impression (Largeur A4 approximative à 96DPI)
+        clone.style.width = '794px'; 
+        clone.style.position = 'absolute';
+        clone.style.top = '-10000px';
+        clone.style.left = '0';
+        clone.style.height = 'auto';
+        clone.style.overflow = 'visible';
+        clone.style.maxHeight = 'none'; // S'assurer qu'il n'y a pas de contrainte
+        clone.classList.remove('overflow-y-auto', 'flex-1'); // Retirer les classes de scroll
+        
+        document.body.appendChild(clone);
+
+        // On utilise html2canvas pour capturer le rendu visuel
+        const canvas = await html2canvas(clone, { 
+            scale: 2, // Meilleure qualité pour l'impression
+            useCORS: true, // Pour gérer les images externes si besoin
+            logging: false,
+            windowWidth: 794 // Force la largeur de capture
+        });
+        
+        // Nettoyage du DOM
+        document.body.removeChild(clone);
+
+        const imgData = canvas.toDataURL('image/jpeg', 0.85); // Compression JPEG 85%
+        const pdf = new jsPDF('p', 'mm', 'a4');
+        const imgWidth = 210; // A4 width mm
+        const pageHeight = 297; // A4 height mm
+        const imgHeight = (canvas.height * imgWidth) / canvas.width;
+        let heightLeft = imgHeight;
+        let position = 0;
+
+        // Première page
+        pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
+        heightLeft -= pageHeight;
+
+        // Pages suivantes si le contenu dépasse
+        while (heightLeft > 0) {
+            position = heightLeft - imgHeight;
+            pdf.addPage();
+            pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight);
+            heightLeft -= pageHeight;
+        }
+
         const pdfBase64 = pdf.output('datauristring').split(',')[1]; // On retire le préfixe data:application/pdf;base64,
 
         // --- 2. CONSTRUCTION DU CORPS DU MAIL HTML ---
