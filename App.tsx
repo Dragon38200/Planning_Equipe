@@ -566,24 +566,18 @@ const GlobalFormsHistory: React.FC<{ responses: FormResponse[], templates: FormT
             })
         });
         
-        // Check if content type is JSON to avoid parsing HTML 404/500 pages in preview mode
-        const contentType = res.headers.get("content-type");
-        if (contentType && contentType.indexOf("application/json") !== -1) {
-             const result = await res.json();
-             if (res.ok) {
-                 alert(`Email envoyé avec succès à ${emailTo} !`);
-             } else {
-                 alert(`Erreur lors de l'envoi : ${result.error || 'Erreur inconnue'}`);
-             }
+        const result = await res.json();
+
+        if (res.ok) {
+             alert(`Email envoyé avec succès à ${emailTo} !`);
         } else {
-            // Likely a 404 from the preview environment (no backend)
-             throw new Error("API Route not found (Preview Mode)");
+             console.error("Erreur Resend:", result);
+             alert(`Erreur lors de l'envoi : ${result.error || 'Erreur inconnue'}`);
         }
 
     } catch (e) {
-        console.warn("Mode Démo / Erreur API:", e);
-        // Fallback pour la démo
-        alert(`[MODE DÉMO] Le serveur d'email n'est pas disponible ici.\n\nSimulation : Email envoyé avec succès à ${emailTo} !\n\n(En production sur Vercel, cet email partira réellement via Resend)`);
+        console.error("Erreur API Email:", e);
+        alert(`Erreur technique lors de l'envoi de l'email. Veuillez réessayer.`);
     } finally {
         setIsSendingEmail(false);
     }
