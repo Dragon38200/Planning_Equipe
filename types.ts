@@ -32,8 +32,9 @@ export interface User {
 
 export interface AppSettings {
   appName: string;
-  appLogoUrl?: string;    // Logo pour la barre de navigation
+  appLogoUrl?: string;    // Gardé pour compatibilité, mais Logo 1 prendra le dessus
   reportLogoUrl?: string; // Logo pour les rapports PDF
+  customLogos?: string[]; // Tableau de 10 logos (Base64)
 }
 
 export interface Mission {

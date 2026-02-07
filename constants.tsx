@@ -54,6 +54,26 @@ export const JOB_NUMBER_REGEX = /^[A-Z]{2}-A\d{2}-\d{4}$/;
 
 export const DEFAULT_TEMPLATES: FormTemplate[] = [
   {
+    id: 'tpl-mise-en-chantier',
+    name: 'Mise en Chantier',
+    description: 'Checklist de démarrage, sécurité et état des lieux.',
+    createdAt: new Date().toISOString(),
+    fields: [
+      { id: 'job_number', label: 'N° Affaire', type: 'text', required: true },
+      { id: 'date', label: 'Date', type: 'date', required: true },
+      { id: 'address', label: 'Adresse Chantier', type: 'text', required: true },
+      { id: 'technician', label: 'Chef de chantier / Technicien', type: 'text', required: true },
+      { id: 'ppsps_read', label: 'PPSPS ou Plan de prévention lu et compris ?', type: 'checkbox', required: true },
+      { id: 'authorization', label: 'Autorisation de travail / Permis feu valides ?', type: 'checkbox', required: true },
+      { id: 'epi_check', label: 'Port des EPI respecté (Casque, Chaussures, Gants...) ?', type: 'checkbox', required: true },
+      { id: 'balisage', label: 'Balisage de la zone effectué ?', type: 'checkbox', required: true },
+      { id: 'materials_check', label: 'Matériel nécessaire disponible ?', type: 'checkbox', required: false },
+      { id: 'comments', label: 'Observations / Risques spécifiques', type: 'textarea', required: false },
+      { id: 'photo_zone', label: 'Photo de la zone de travail / Balisage', type: 'photo', required: false },
+      { id: 'signature', label: 'Signature Responsable Chantier', type: 'signature', required: true }
+    ]
+  },
+  {
     id: 'tpl-compte-rendu',
     name: 'Compte Rendu d\'Intervention',
     description: 'Rapport détaillé avec photos et signatures pour le client.',

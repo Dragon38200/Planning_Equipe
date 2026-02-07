@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { User, Role, Mission, WeekSelection, AppSettings, FormTemplate, FormResponse } from './types';
+import { User, Role, Mission, WeekSelection, AppSettings, FormTemplate, FormResponse, FormField } from './types';
 import { DEFAULT_APP_LOGO, DEFAULT_ADMIN, INITIAL_MANAGERS, INITIAL_TECHNICIANS, DEFAULT_TEMPLATES } from './constants';
 import { getInitialMissions } from './data';
 import { getCurrentWeekInfo, exportToCSV } from './utils';
@@ -7,7 +7,7 @@ import TechnicianDashboard from './components/TechnicianDashboard';
 import ManagerDashboard from './components/ManagerDashboard';
 import AdminDashboard from './components/AdminDashboard';
 import MissionManager from './components/MissionManager';
-import { LogOut, Factory, Calendar, ClipboardList, BookOpen, Search, Eye, FileText, CheckCircle2, X, Trash2, Plus, Printer, AlertCircle, Settings, FileSpreadsheet, Download, Briefcase, Lock, ArrowRight, User as UserIcon, Loader2, PenTool, CheckSquare, Square, Camera, FilePlus, Mail, Image as ImageIcon } from 'lucide-react';
+import { LogOut, Factory, Calendar, ClipboardList, BookOpen, Search, Eye, FileText, CheckCircle2, X, Trash2, Plus, Printer, AlertCircle, Settings, FileSpreadsheet, Download, Briefcase, Lock, ArrowRight, User as UserIcon, Loader2, PenTool, CheckSquare, Square, Camera, FilePlus, Mail, Image as ImageIcon, HardHat, Edit2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { fr } from 'date-fns/locale';
 // @ts-ignore
@@ -20,13 +20,553 @@ import JSZip from 'jszip';
 // LOCAL STORAGE IMPORTS (Replacing Firebase)
 import { COLL_USERS, COLL_MISSIONS, COLL_TEMPLATES, COLL_RESPONSES, COLL_SETTINGS, saveDocument, deleteDocument, batchSaveMissions, seedDatabaseIfEmpty, subscribe } from './firebase';
 
+// --- HELPER COMPONENTS (DEFINED BEFORE APP TO AVOID HOISTING ISSUES) ---
+
+const SharedFormModal: React.FC<{
+  user: User;
+  template: FormTemplate;
+  users: User[];
+  initialData: Record<string, any>;
+  onClose: () => void;
+  onSave: (response: FormResponse) => void;
+}> = ({ user, template, users, initialData, onClose, onSave }) => {
+  const [formData, setFormData] = useState<Record<string, any>>(initialData);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const [activeSignatureFieldId, setActiveSignatureFieldId] = useState<string | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [isDrawing, setIsDrawing] = useState(false);
+
+  // Update formData when initialData changes
+  useEffect(() => {
+    setFormData(initialData);
+  }, [initialData]);
+  
+  // Fill Select Options (Managers)
+  const hydratedFields = template.fields.map(f => {
+      if (f.id === 'manager_id' && (!f.options || f.options.length === 0)) {
+          return { ...f, options: users.filter(u => u.role === Role.MANAGER).map(m => m.name) };
+      }
+      return f;
+  });
+
+  const handleSave = async () => {
+      const errors: string[] = [];
+      hydratedFields.forEach(f => {
+          if (f.required) {
+              const val = formData[f.id];
+              if (f.type === 'checkbox') {
+                  if (val === undefined || val === null) errors.push(f.label);
+              } else if (f.type === 'photo_gallery') {
+                 // check if empty?
+              } else {
+                  if (!val || String(val).trim() === '') errors.push(f.label);
+              }
+          }
+      });
+      
+      if (errors.length > 0) {
+          setValidationErrors(errors);
+          const el = document.getElementById('shared-form-content');
+          if (el) el.scrollTo({ top: 0, behavior: 'smooth' });
+          return;
+      }
+      
+      setIsSubmitting(true);
+      
+      const response: FormResponse = {
+          id: `res-${Date.now()}`,
+          templateId: template.id,
+          technicianId: user.id,
+          submittedAt: new Date().toISOString(),
+          data: formData
+      };
+      
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      onSave(response);
+      setIsSubmitting(false);
+  };
+  
+  const startDrawing = (e: any) => { 
+    setIsDrawing(true); 
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+    const y = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+  };
+
+  const draw = (e: any) => {
+    if (!isDrawing || !canvasRef.current) return;
+    const ctx = canvasRef.current.getContext('2d');
+    if (!ctx) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+    const y = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top;
+    ctx.lineWidth = 3; 
+    ctx.lineCap = 'round'; 
+    ctx.strokeStyle = '#000';
+    ctx.lineTo(x, y); 
+    ctx.stroke();
+  };
+
+  const endDrawing = () => {
+    setIsDrawing(false);
+    if (canvasRef.current && activeSignatureFieldId) {
+      const signatureData = canvasRef.current.toDataURL('image/png');
+      setFormData(prev => ({ ...prev, [activeSignatureFieldId]: signatureData }));
+    }
+  };
+
+  const clearSignature = () => {
+    const canvas = canvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      ctx?.clearRect(0, 0, canvas.width, canvas.height);
+      if (activeSignatureFieldId) {
+        setFormData(prev => {
+          const next = { ...prev };
+          delete next[activeSignatureFieldId];
+          return next;
+        });
+      }
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[150] bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-4">
+      {activeSignatureFieldId && (
+        <div className="fixed inset-0 z-[250] bg-slate-900/95 backdrop-blur-sm flex items-center justify-center p-4">
+           <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden border border-slate-200">
+              <div className="p-5 bg-slate-900 text-white flex justify-between items-center">
+                 <h3 className="text-sm font-black uppercase tracking-widest">Signer le document</h3>
+                 <button onClick={() => setActiveSignatureFieldId(null)} className="p-2 hover:bg-white/10 rounded-full transition-colors"><X /></button>
+              </div>
+              <div className="p-8 space-y-6">
+                <div className="relative border-2 border-slate-200 rounded-2xl bg-slate-50 overflow-hidden h-64 touch-none">
+                   <canvas ref={canvasRef} width={500} height={300} onMouseDown={startDrawing} onMouseMove={draw} onMouseUp={endDrawing} onMouseOut={endDrawing} onTouchStart={startDrawing} onTouchMove={draw} onTouchEnd={endDrawing} className="w-full h-full cursor-crosshair" />
+                </div>
+                <div className="flex gap-4">
+                   <button onClick={clearSignature} className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-xl font-black uppercase text-[10px] tracking-widest">Effacer</button>
+                   <button onClick={() => setActiveSignatureFieldId(null)} className="flex-1 py-4 bg-indigo-600 text-white rounded-xl font-black uppercase text-[10px] tracking-widest shadow-lg">Valider</button>
+                </div>
+              </div>
+           </div>
+        </div>
+      )}
+      
+      <div className="bg-white w-full max-w-2xl rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95">
+          <div className="p-6 bg-indigo-600 text-white flex justify-between items-center shrink-0">
+              <h2 className="text-lg font-black uppercase tracking-tight">{template.name}</h2>
+              <button disabled={isSubmitting} onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors"><X/></button>
+          </div>
+          
+          <div id="shared-form-content" className="p-10 overflow-y-auto flex-1 space-y-8 bg-white">
+              {validationErrors.length > 0 && (
+                  <div className="bg-red-50 border-2 border-red-200 p-6 rounded-2xl flex items-start gap-4 animate-in shake">
+                      <AlertCircle className="text-red-600 shrink-0" size={24} />
+                      <div>
+                          <p className="text-sm font-black text-red-800 uppercase mb-1">Erreurs de validation :</p>
+                          <ul className="list-disc list-inside text-xs font-bold text-red-600">
+                              {validationErrors.map((e, i) => <li key={i}>{e}</li>)}
+                          </ul>
+                      </div>
+                  </div>
+              )}
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {hydratedFields.map(field => (
+                      <div key={field.id} className={`${['textarea', 'signature', 'photo', 'photo_gallery'].includes(field.type) ? 'md:col-span-2' : ''} space-y-2`}>
+                          <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1">{field.label} {field.required && <span className="text-red-500">*</span>}</label>
+                          {field.type === 'textarea' ? (
+                              <textarea value={formData[field.id] || ''} onChange={e => setFormData({...formData, [field.id]: e.target.value})} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-800 focus:ring-2 focus:ring-indigo-500 outline-none min-h-[120px]" disabled={field.readOnly} />
+                          ) : field.type === 'select' ? (
+                              <select value={formData[field.id] || ''} onChange={e => setFormData({...formData, [field.id]: e.target.value})} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-800 focus:ring-2 focus:ring-indigo-500 outline-none" disabled={field.readOnly}>
+                                  <option value="">Sélectionner...</option>
+                                  {field.options?.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                              </select>
+                          ) : field.type === 'checkbox' ? (
+                              <button type="button" onClick={() => !field.readOnly && setFormData({...formData, [field.id]: !formData[field.id]})} className={`w-full p-4 rounded-2xl border-2 flex items-center justify-between font-black transition-all ${formData[field.id] ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-slate-50 border-slate-200 text-slate-400'}`} disabled={field.readOnly}>
+                                  {formData[field.id] ? 'OUI / SANS RÉSERVE' : 'NON / AVEC RÉSERVE'}
+                                  {formData[field.id] ? <CheckSquare size={20}/> : <Square size={20}/>}
+                              </button>
+                          ) : field.type === 'signature' ? (
+                              <div onClick={() => !isSubmitting && setActiveSignatureFieldId(field.id)} className={`relative h-32 border-2 border-dashed rounded-2xl bg-slate-50 flex items-center justify-center cursor-pointer transition-all ${formData[field.id] ? 'border-emerald-500 bg-emerald-50/20' : 'border-slate-200 hover:bg-indigo-50/50'}`}>
+                                  {formData[field.id] ? <img src={formData[field.id]} alt="Signed" className="h-full object-contain grayscale" /> : <div className="text-slate-400 flex flex-col items-center gap-1 font-black text-[9px] uppercase tracking-tighter"><PenTool size={20}/><p>Cliquer pour signer</p></div>}
+                              </div>
+                          ) : field.type === 'photo' ? (
+                              <label className={`flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-2xl cursor-pointer bg-slate-50 hover:bg-indigo-50/50 transition-all ${formData[field.id] ? 'border-emerald-500' : 'border-slate-200'}`}>
+                                  {formData[field.id] ? (
+                                      <div className="relative w-full h-full p-2"><img src={formData[field.id]} className="w-full h-full object-contain rounded-xl" alt="Preview"/><button type="button" onClick={(e) => {e.preventDefault(); setFormData(p => ({...p, [field.id]: null}))}} className="absolute top-2 right-2 bg-red-500 text-white p-1 rounded-full"><X size={12}/></button></div>
+                                  ) : (
+                                      <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                                          <Camera className="w-8 h-8 mb-2 text-slate-400" />
+                                          <p className="mb-2 text-xs text-slate-500"><span className="font-bold">Cliquez pour prendre une photo</span></p>
+                                      </div>
+                                  )}
+                                  <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => {
+                                      const file = e.target.files?.[0];
+                                      if (file) {
+                                          const reader = new FileReader();
+                                          reader.onloadend = () => setFormData(p => ({...p, [field.id]: reader.result}));
+                                          reader.readAsDataURL(file);
+                                      }
+                                  }} />
+                              </label>
+                          ) : field.type === 'photo_gallery' ? (
+                              <div className="space-y-4">
+                                  <div className="flex flex-wrap gap-3">
+                                      {Array.isArray(formData[field.id]) && formData[field.id].map((photo: string, idx: number) => (
+                                          <div key={idx} className="relative w-24 h-24 border rounded-xl overflow-hidden group">
+                                              <img src={photo} alt={`Photo ${idx+1}`} className="w-full h-full object-cover" />
+                                              <button type="button" onClick={() => {
+                                                  const newPhotos = [...formData[field.id]];
+                                                  newPhotos.splice(idx, 1);
+                                                  setFormData(p => ({...p, [field.id]: newPhotos}));
+                                              }} className="absolute inset-0 bg-black/50 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={16}/></button>
+                                          </div>
+                                      ))}
+                                      {(!formData[field.id] || formData[field.id].length < 10) && (
+                                          <label className="w-24 h-24 border-2 border-dashed border-slate-200 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 text-slate-400 hover:text-indigo-500 transition-all">
+                                              <Plus size={24}/>
+                                              <span className="text-[9px] font-black uppercase mt-1">Ajouter</span>
+                                              <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => {
+                                                  const file = e.target.files?.[0];
+                                                  if (file) {
+                                                      const reader = new FileReader();
+                                                      reader.onloadend = () => {
+                                                          const current = Array.isArray(formData[field.id]) ? formData[field.id] : [];
+                                                          if(current.length < 10) setFormData(p => ({...p, [field.id]: [...current, reader.result]}));
+                                                      };
+                                                      reader.readAsDataURL(file);
+                                                  }
+                                              }} />
+                                          </label>
+                                      )}
+                                  </div>
+                                  <p className="text-[10px] text-slate-400 font-bold italic">{Array.isArray(formData[field.id]) ? formData[field.id].length : 0} / 10 photos</p>
+                              </div>
+                          ) : (
+                              <input type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'} step={field.type === 'number' ? '0.5' : undefined} value={formData[field.id] || ''} onChange={e => setFormData({...formData, [field.id]: e.target.value})} className={`w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-800 focus:ring-2 focus:ring-indigo-500 outline-none ${field.readOnly ? 'bg-slate-100 text-slate-500' : ''}`} disabled={field.readOnly} />
+                          )}
+                      </div>
+                  ))}
+              </div>
+              
+              <div className="pt-6">
+                  <button onClick={handleSave} disabled={isSubmitting} className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-indigo-600 transition-all shadow-xl shadow-slate-200 disabled:opacity-50 flex items-center justify-center gap-2">
+                      {isSubmitting ? <Loader2 className="animate-spin" /> : <CheckCircle2 />}
+                      Enregistrer le rapport
+                  </button>
+              </div>
+          </div>
+      </div>
+    </div>
+  );
+};
+
+const FormTemplateManager: React.FC<{ templates: FormTemplate[], onUpdateTemplates: (t: FormTemplate[]) => void }> = ({ templates, onUpdateTemplates }) => {
+    const [editingTemplate, setEditingTemplate] = useState<FormTemplate | null>(null);
+
+    const handleSave = () => {
+        if (!editingTemplate) return;
+        if (!editingTemplate.name) return alert("Le nom est obligatoire");
+        const isNew = !templates.find(t => t.id === editingTemplate.id);
+        const newTemplates = isNew ? [...templates, editingTemplate] : templates.map(t => t.id === editingTemplate.id ? editingTemplate : t);
+        onUpdateTemplates(newTemplates);
+        setEditingTemplate(null);
+    };
+
+    const handleDelete = (id: string) => {
+        if (window.confirm("Supprimer ce modèle ?")) onUpdateTemplates(templates.filter(t => t.id !== id));
+    };
+    
+    const addField = () => {
+        if (!editingTemplate) return;
+        setEditingTemplate({
+            ...editingTemplate,
+            fields: [...editingTemplate.fields, { id: `f_${Date.now()}`, label: 'Nouveau Champ', type: 'text', required: false }]
+        });
+    };
+    
+    const updateField = (idx: number, updates: Partial<FormField>) => {
+        if (!editingTemplate) return;
+        const newFields = [...editingTemplate.fields];
+        newFields[idx] = { ...newFields[idx], ...updates };
+        setEditingTemplate({ ...editingTemplate, fields: newFields });
+    };
+
+    const removeField = (idx: number) => {
+        if (!editingTemplate) return;
+        const newFields = [...editingTemplate.fields];
+        newFields.splice(idx, 1);
+        setEditingTemplate({ ...editingTemplate, fields: newFields });
+    };
+
+    if (editingTemplate) {
+        return (
+            <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-xl space-y-6 animate-in slide-in-from-bottom-4">
+                <div className="flex justify-between items-center border-b border-slate-100 pb-4">
+                    <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">{editingTemplate.id.startsWith('new') ? 'Créer un modèle' : 'Modifier le modèle'}</h2>
+                    <button onClick={() => setEditingTemplate(null)} className="p-2 hover:bg-slate-100 rounded-full"><X/></button>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nom du modèle</label><input type="text" value={editingTemplate.name} onChange={e => setEditingTemplate({...editingTemplate, name: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800 outline-none focus:border-indigo-500" /></div>
+                    <div><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Description</label><input type="text" value={editingTemplate.description} onChange={e => setEditingTemplate({...editingTemplate, description: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-800 outline-none focus:border-indigo-500" /></div>
+                </div>
+                <div className="space-y-4">
+                    <div className="flex justify-between items-center"><h3 className="text-sm font-black text-slate-600 uppercase tracking-widest">Champs du formulaire</h3><button onClick={addField} className="px-4 py-2 bg-indigo-50 text-indigo-600 rounded-xl text-xs font-black uppercase hover:bg-indigo-100 flex items-center gap-2"><Plus size={14}/> Ajouter un champ</button></div>
+                    <div className="space-y-3">
+                        {editingTemplate.fields.map((field, idx) => (
+                            <div key={field.id} className="flex gap-3 items-start p-4 bg-slate-50 border border-slate-200 rounded-xl group">
+                                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 flex-1">
+                                    <input type="text" placeholder="ID" value={field.id} onChange={e => updateField(idx, {id: e.target.value})} className="bg-white p-2 rounded-lg border border-slate-200 text-xs font-mono" />
+                                    <input type="text" placeholder="Label" value={field.label} onChange={e => updateField(idx, {label: e.target.value})} className="bg-white p-2 rounded-lg border border-slate-200 text-xs font-bold md:col-span-2" />
+                                    <select value={field.type} onChange={e => updateField(idx, {type: e.target.value as any})} className="bg-white p-2 rounded-lg border border-slate-200 text-xs font-bold"><option value="text">Texte</option><option value="textarea">Zone de texte</option><option value="number">Nombre</option><option value="date">Date</option><option value="checkbox">Case à cocher</option><option value="signature">Signature</option><option value="photo">Photo (Unique)</option><option value="photo_gallery">Galerie Photos</option><option value="select">Liste déroulante</option></select>
+                                </div>
+                                <div className="flex flex-col gap-2 items-center pt-1">
+                                    <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={field.required} onChange={e => updateField(idx, {required: e.target.checked})} className="w-4 h-4 rounded text-indigo-600" /><span className="text-[9px] font-black text-slate-400 uppercase">Req</span></label>
+                                    <button onClick={() => removeField(idx)} className="text-slate-300 hover:text-red-500"><Trash2 size={16}/></button>
+                                </div>
+                            </div>
+                        ))}
+                         {editingTemplate.fields.length === 0 && <div className="p-8 text-center text-slate-400 font-bold italic border-2 border-dashed border-slate-100 rounded-xl">Aucun champ défini. Ajoutez-en un !</div>}
+                    </div>
+                </div>
+                <div className="flex gap-4 pt-4 border-t border-slate-100">
+                    <button onClick={() => setEditingTemplate(null)} className="flex-1 py-3 bg-slate-100 text-slate-600 rounded-xl font-black uppercase text-xs hover:bg-slate-200">Annuler</button>
+                    <button onClick={handleSave} className="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-black uppercase text-xs hover:bg-indigo-700 shadow-lg shadow-indigo-200">Enregistrer le modèle</button>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <button onClick={() => setEditingTemplate({ id: `tpl-${Date.now()}`, name: 'Nouveau Modèle', description: '', fields: [], createdAt: new Date().toISOString() })} className="bg-slate-50 border-2 border-dashed border-slate-200 rounded-[2.5rem] flex flex-col items-center justify-center gap-4 min-h-[200px] hover:border-indigo-400 hover:bg-indigo-50/10 transition-all group">
+                <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center text-slate-300 group-hover:text-indigo-600 group-hover:scale-110 transition-all shadow-sm"><Plus size={32}/></div>
+                <p className="font-black text-slate-400 uppercase text-xs tracking-widest group-hover:text-indigo-600">Créer un modèle</p>
+            </button>
+            {templates.map(t => (
+                <div key={t.id} className="bg-white p-6 rounded-[2.5rem] border border-slate-200 shadow-lg hover:shadow-xl transition-all flex flex-col justify-between space-y-4">
+                    <div>
+                        <div className="flex justify-between items-start mb-2">
+                             <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl"><FileText size={24}/></div>
+                             <div className="flex gap-1">
+                                 <button onClick={() => setEditingTemplate(t)} className="p-2 text-slate-400 hover:bg-slate-100 rounded-lg hover:text-indigo-600"><Edit2 size={16}/></button>
+                                 <button onClick={() => handleDelete(t.id)} className="p-2 text-slate-400 hover:bg-red-50 rounded-lg hover:text-red-600"><Trash2 size={16}/></button>
+                             </div>
+                        </div>
+                        <h3 className="text-lg font-black text-slate-800 uppercase leading-none">{t.name}</h3>
+                        <p className="text-xs text-slate-500 font-bold mt-2 line-clamp-2">{t.description}</p>
+                    </div>
+                    <div className="pt-4 border-t border-slate-50 flex justify-between items-center">
+                        <span className="text-[10px] font-black text-slate-300 uppercase">{t.fields.length} Champs</span>
+                        <span className="text-[10px] font-bold text-slate-300">{new Date(t.createdAt).toLocaleDateString()}</span>
+                    </div>
+                </div>
+            ))}
+        </div>
+    );
+};
+
+const GlobalFormsHistory: React.FC<{ responses: FormResponse[], templates: FormTemplate[], users: User[], appSettings: AppSettings }> = ({ responses, templates, users, appSettings }) => {
+  const [selectedResponse, setSelectedResponse] = useState<FormResponse | null>(null);
+  const [search, setSearch] = useState('');
+  const [isSendingEmail, setIsSendingEmail] = useState(false);
+
+  const filtered = responses.filter(r => {
+      const t = templates.find(t => t.id === r.templateId);
+      const u = users.find(u => u.id === r.technicianId);
+      const searchStr = (search || '').toLowerCase();
+      return (
+          (t?.name || '').toLowerCase().includes(searchStr) ||
+          (u?.name || '').toLowerCase().includes(searchStr) ||
+          (r.data.job_number || '').toLowerCase().includes(searchStr)
+      );
+  }).sort((a,b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
+
+  const handleAction = async (action: 'download' | 'email') => {
+      if (!selectedResponse) return;
+      const element = document.getElementById('report-print-area');
+      if (!element) return;
+
+      if (action === 'email') setIsSendingEmail(true);
+
+      try {
+          const canvas = await html2canvas(element, { scale: 2, useCORS: true });
+          const imgData = canvas.toDataURL('image/jpeg', 0.9);
+          const pdf = new jsPDF('p', 'mm', 'a4');
+          const pdfWidth = pdf.internal.pageSize.getWidth();
+          const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+          
+          let heightLeft = pdfHeight;
+          let position = 0;
+          
+          pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, pdfHeight);
+          heightLeft -= pdf.internal.pageSize.getHeight();
+
+          while (heightLeft >= 0) {
+            position = heightLeft - pdfHeight;
+            pdf.addPage();
+            pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, pdfHeight);
+            heightLeft -= pdf.internal.pageSize.getHeight();
+          }
+
+          if (action === 'download') {
+              pdf.save(`Rapport_${selectedResponse.data.job_number || 'Intervention'}.pdf`);
+          } else {
+              const email = prompt("Email du destinataire :", selectedResponse.data.client_email || "");
+              if (!email) { setIsSendingEmail(false); return; }
+
+              const pdfBase64 = pdf.output('datauristring').split(',')[1];
+              
+              const res = await fetch('/api/send-email', {
+                  method: 'POST',
+                  headers: {'Content-Type': 'application/json'},
+                  body: JSON.stringify({
+                      to: email,
+                      subject: `Rapport: ${selectedResponse.data.job_number || 'Intervention'}`,
+                      html: `<p>Bonjour,</p><p>Veuillez trouver ci-joint le rapport d'intervention.</p>`,
+                      attachments: [{filename: `Rapport.pdf`, content: pdfBase64}]
+                  })
+              });
+              
+              if(res.ok) alert("Email envoyé !");
+              else alert("Erreur lors de l'envoi. Vérifiez la configuration serveur.");
+          }
+
+      } catch(e) {
+          console.error(e);
+          alert("Erreur lors de la génération du document.");
+      } finally {
+          setIsSendingEmail(false);
+      }
+  };
+
+  return (
+      <div className="space-y-6">
+          {selectedResponse && (
+             <div className="fixed inset-0 z-[200] bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
+                <div className="bg-white w-full max-w-3xl max-h-[90vh] flex flex-col rounded-[2.5rem] shadow-2xl relative animate-in zoom-in-95 overflow-hidden">
+                    <div className="p-6 bg-slate-50 border-b border-slate-100 flex justify-between items-center shrink-0">
+                        <h3 className="font-black text-slate-800 uppercase tracking-tight">Aperçu du Rapport</h3>
+                        <button onClick={() => setSelectedResponse(null)} className="p-2 hover:bg-slate-200 rounded-full"><X/></button>
+                    </div>
+
+                    <div id="report-print-area" className="p-10 overflow-y-auto bg-white flex-1">
+                        <div className="flex justify-between items-start mb-8 pb-6 border-b border-slate-100">
+                             <div>
+                                <h1 className="text-2xl font-black text-slate-900 uppercase tracking-tighter">{templates.find(t => t.id === selectedResponse.templateId)?.name}</h1>
+                                <p className="text-xs font-bold text-slate-500 mt-1">Émis le {format(new Date(selectedResponse.submittedAt), 'dd/MM/yyyy à HH:mm')}</p>
+                                <p className="text-xs font-bold text-slate-500">Par {users.find(u => u.id === selectedResponse.technicianId)?.name || selectedResponse.technicianId}</p>
+                             </div>
+                             {(appSettings.reportLogoUrl || appSettings.appLogoUrl) && (
+                                 <img src={appSettings.reportLogoUrl || appSettings.appLogoUrl} className="h-20 w-auto object-contain" alt="Logo" />
+                             )}
+                        </div>
+
+                        <div className="space-y-6">
+                             {templates.find(t => t.id === selectedResponse.templateId)?.fields.map(field => (
+                                 <div key={field.id} className="border-b border-slate-50 pb-4 last:border-0 break-inside-avoid">
+                                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">{field.label}</p>
+                                     {field.type === 'signature' ? (
+                                         selectedResponse.data[field.id] ? <img src={selectedResponse.data[field.id]} alt="Signature" className="h-16 object-contain border border-slate-200 rounded-lg" /> : <span className="text-xs italic text-slate-300">Non signé</span>
+                                     ) : field.type === 'photo' ? (
+                                         selectedResponse.data[field.id] ? <img src={selectedResponse.data[field.id]} alt="Photo" className="h-32 object-contain border border-slate-200 rounded-lg" /> : <span className="text-xs italic text-slate-300">Aucune photo</span>
+                                     ) : field.type === 'photo_gallery' ? (
+                                          <div className="flex gap-2 flex-wrap">
+                                              {Array.isArray(selectedResponse.data[field.id]) && selectedResponse.data[field.id].map((img: string, i: number) => (
+                                                  <img key={i} src={img} className="h-24 w-24 object-cover rounded-lg border border-slate-200" />
+                                              ))}
+                                              {(!selectedResponse.data[field.id] || selectedResponse.data[field.id].length === 0) && <span className="text-xs italic text-slate-300">Galerie vide</span>}
+                                          </div>
+                                     ) : (
+                                         <p className="text-sm font-bold text-slate-800 whitespace-pre-wrap">
+                                             {field.type === 'checkbox' 
+                                                ? (selectedResponse.data[field.id] ? 'OUI' : 'NON') 
+                                                : (selectedResponse.data[field.id]?.toString() || '-')}
+                                         </p>
+                                     )}
+                                 </div>
+                             ))}
+                        </div>
+                    </div>
+
+                    <div className="p-6 bg-slate-50 border-t border-slate-100 flex gap-4 shrink-0">
+                        <button onClick={() => handleAction('download')} className="flex-1 py-4 bg-slate-900 text-white rounded-xl font-black uppercase text-xs flex items-center justify-center gap-2 hover:bg-slate-700 transition-all">
+                            <Printer size={16} /> Imprimer PDF
+                        </button>
+                        <button onClick={() => handleAction('email')} disabled={isSendingEmail} className="flex-1 py-4 bg-blue-600 text-white rounded-xl font-black uppercase text-xs flex items-center justify-center gap-2 hover:bg-blue-700 transition-all disabled:opacity-50">
+                            {isSendingEmail ? <Loader2 className="animate-spin" size={16} /> : <Mail size={16} />} Envoyer par Mail
+                        </button>
+                    </div>
+                </div>
+             </div>
+          )}
+
+          <div className="flex justify-between items-center bg-white p-8 rounded-[2rem] border border-slate-200 shadow-sm">
+             <div className="flex items-center gap-5">
+                 <div className="bg-blue-600 p-3 rounded-2xl text-white shadow-lg shadow-blue-200"><FileText size={28}/></div>
+                 <div><h2 className="text-2xl font-black text-slate-800">Historique des Rapports</h2><p className="text-slate-500 text-sm font-medium">Consultez et téléchargez les rapports envoyés.</p></div>
+             </div>
+             <div className="relative">
+                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20}/>
+                 <input type="text" placeholder="Rechercher..." value={search} onChange={e => setSearch(e.target.value)} className="pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:ring-2 focus:ring-indigo-500 w-64" />
+             </div>
+          </div>
+
+          <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl overflow-hidden">
+              <table className="w-full text-left">
+                  <thead className="bg-slate-50 border-b border-slate-100">
+                      <tr>
+                          <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Date</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Modèle</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Technicien</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Affaire / Info</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Actions</th>
+                      </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                      {filtered.map(r => {
+                          const t = templates.find(temp => temp.id === r.templateId);
+                          const u = users.find(user => user.id === r.technicianId);
+                          return (
+                              <tr key={r.id} className="hover:bg-slate-50/50 transition-colors">
+                                  <td className="px-6 py-4 font-bold text-sm text-slate-800">{format(new Date(r.submittedAt), 'dd/MM/yyyy HH:mm')}</td>
+                                  <td className="px-6 py-4 font-bold text-sm text-indigo-600">{t?.name || 'Inconnu'}</td>
+                                  <td className="px-6 py-4 font-bold text-sm text-slate-600">{u?.name || r.technicianId}</td>
+                                  <td className="px-6 py-4 text-xs font-bold text-slate-500 truncate max-w-xs">{r.data.job_number || r.data.client_name || '-'}</td>
+                                  <td className="px-6 py-4 text-right">
+                                      <button onClick={() => setSelectedResponse(r)} className="p-2 text-slate-400 hover:text-indigo-600 bg-slate-100 hover:bg-indigo-50 rounded-xl transition-all"><Eye size={18}/></button>
+                                  </td>
+                              </tr>
+                          );
+                      })}
+                      {filtered.length === 0 && (
+                          <tr><td colSpan={5} className="p-8 text-center text-slate-400 font-bold">Aucun rapport trouvé.</td></tr>
+                      )}
+                  </tbody>
+              </table>
+          </div>
+      </div>
+  );
+};
+
+// --- APP COMPONENT ---
+
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = React.useState<User | null>(null);
   const [missions, setMissions] = React.useState<Mission[]>([]);
   const [users, setUsers] = React.useState<User[]>([]);
   const [templates, setTemplates] = React.useState<FormTemplate[]>([]);
   const [responses, setResponses] = React.useState<FormResponse[]>([]);
-  const [appSettings, setAppSettings] = React.useState<AppSettings>({ appName: 'PLANIT-MOUNIER', appLogoUrl: '' });
+  const [appSettings, setAppSettings] = React.useState<AppSettings>({ appName: 'PLANIT-MOUNIER', appLogoUrl: '', customLogos: [] });
   
   const [currentWeek, setCurrentWeek] = React.useState<WeekSelection>(getCurrentWeekInfo());
   const [isLoading, setIsLoading] = React.useState(true);
@@ -41,6 +581,18 @@ const App: React.FC = () => {
 
   // --- GLOBAL FORM STATE ---
   const [globalFormTemplate, setGlobalFormTemplate] = useState<FormTemplate | null>(null);
+  const [globalFormData, setGlobalFormData] = useState<Record<string, any>>({});
+
+  // LOGIQUE LOGOS :
+  // Logo 1 : Défaut / Ancien principal
+  const logo1 = appSettings.customLogos?.[0] || appSettings.appLogoUrl || DEFAULT_APP_LOGO;
+  // Logo 2 : Nouveau Principal (remplace Logo 1 si présent)
+  const logo2 = appSettings.customLogos?.[1];
+  // Logo 3 : Secondaire (ajouté à côté)
+  const logo3 = appSettings.customLogos?.[2];
+
+  // Le logo principal affiché est Logo 2 s'il existe, sinon Logo 1
+  const mainDisplayLogo = logo2 || logo1;
 
   // --- INITIALISATION & LISTENERS LOCAL STORAGE ---
   useEffect(() => {
@@ -68,7 +620,7 @@ const App: React.FC = () => {
     const unsubSettings = subscribe(COLL_SETTINGS, (data) => {
         const config = data.find((d: any) => d.id === 'app_config');
         if (config) setAppSettings(config as AppSettings);
-        else setAppSettings({ appName: 'PLANIT-MOUNIER', appLogoUrl: '' });
+        else setAppSettings({ appName: 'PLANIT-MOUNIER', appLogoUrl: '', customLogos: [] });
         
         // Tout est chargé
         setIsLoading(false);
@@ -150,10 +702,14 @@ const App: React.FC = () => {
   
   const handleLogout = () => { setCurrentUser(null); setLoginId(''); setLoginPassword(''); setLoginError(''); };
 
-  const handleOpenGlobalForm = () => {
-      const tpl = templates.find(t => t.id === 'tpl-compte-rendu');
-      if (tpl) setGlobalFormTemplate(tpl);
-      else alert("Le modèle 'Compte Rendu d'Intervention' est introuvable.");
+  const handleOpenGlobalForm = (templateId: string, initialData: Record<string, any> = {}) => {
+      const tpl = templates.find(t => t.id === templateId);
+      if (tpl) {
+          setGlobalFormTemplate(tpl);
+          setGlobalFormData(initialData);
+      } else {
+          alert(`Le modèle (ID: ${templateId}) est introuvable.`);
+      }
   };
 
   const renderManagerContent = () => {
@@ -166,7 +722,16 @@ const App: React.FC = () => {
                 <button onClick={() => setManagerView('GESTION')} className={`px-8 py-3 rounded-xl text-[10px] font-black border-2 transition-all ${managerView === 'GESTION' ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white border-slate-200 text-slate-400 hover:border-slate-300'}`}>GESTION DES INTERVENTIONS</button>
             </div>
             {managerView === 'PLANNING' ? (
-                <ManagerDashboard user={currentUser!} missions={missions} technicians={technicians} onUpdateMissions={updateMissions} onRemoveMission={removeMissionById} responses={responses} templates={templates} />
+                <ManagerDashboard 
+                    user={currentUser!} 
+                    missions={missions} 
+                    technicians={technicians} 
+                    onUpdateMissions={updateMissions} 
+                    onRemoveMission={removeMissionById} 
+                    responses={responses} 
+                    templates={templates} 
+                    onOpenForm={(templateId, data) => handleOpenGlobalForm(templateId, data)}
+                />
             ) : (
                 <MissionManager missions={missions} technicians={technicians} managers={managers} onUpdateMissions={updateMissions} onRemoveMission={removeMissionById} />
             )}
@@ -205,12 +770,20 @@ const App: React.FC = () => {
         <nav className="bg-white/90 backdrop-blur-lg border-b border-slate-200 sticky top-0 z-50 shadow-sm print:hidden">
           <div className="max-w-screen-2xl mx-auto px-4 h-20 flex justify-between items-center">
             <div className="flex items-center gap-4">
-               <img src={appSettings.appLogoUrl || DEFAULT_APP_LOGO} alt="Logo" className="h-10 w-auto object-contain rounded-lg" />
-              <span className="text-xl font-black text-slate-800 uppercase tracking-tighter">{appSettings.appName}</span>
-              <button onClick={handleOpenGlobalForm} className="hidden md:flex ml-4 px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-black uppercase items-center gap-2 hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200"><FilePlus size={16}/> Nouveau Compte Rendu</button>
+               {/* Affichage Logo 2 (Principal) */}
+               <img src={mainDisplayLogo} alt="Logo" className="h-10 w-auto object-contain rounded-lg" />
+               {/* Affichage Logo 3 (Secondaire) à côté */}
+               {logo3 && <img src={logo3} alt="Logo Secondaire" className="h-10 w-auto object-contain rounded-lg" />}
+               
+              <span className="text-xl font-black text-slate-800 uppercase tracking-tighter hidden md:inline">{appSettings.appName}</span>
+              <div className="flex gap-2 ml-4">
+                  <button onClick={() => handleOpenGlobalForm('tpl-compte-rendu')} className="hidden md:flex px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-black uppercase items-center gap-2 hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200"><FilePlus size={16}/> Compte Rendu</button>
+                  <button onClick={() => handleOpenGlobalForm('tpl-mise-en-chantier')} className="hidden md:flex px-4 py-2 bg-emerald-600 text-white rounded-xl text-xs font-black uppercase items-center gap-2 hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-200"><HardHat size={16}/> Mise en Chantier</button>
+              </div>
             </div>
             <div className="flex items-center gap-4">
-              <button onClick={handleOpenGlobalForm} className="md:hidden p-2 bg-indigo-600 text-white rounded-lg"><FilePlus size={20}/></button>
+              <button onClick={() => handleOpenGlobalForm('tpl-mise-en-chantier')} className="md:hidden p-2 bg-emerald-600 text-white rounded-lg"><HardHat size={20}/></button>
+              <button onClick={() => handleOpenGlobalForm('tpl-compte-rendu')} className="md:hidden p-2 bg-indigo-600 text-white rounded-lg"><FilePlus size={20}/></button>
               <div className="flex items-center gap-3 px-4 py-2 bg-slate-50 rounded-2xl border border-slate-200">
                 <div className="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[10px] font-black">{currentUser.initials}</div>
                 <span className="hidden md:inline text-xs font-black text-slate-800">{currentUser.name}</span>
@@ -227,8 +800,9 @@ const App: React.FC = () => {
             user={currentUser} 
             template={globalFormTemplate} 
             users={users} 
-            onClose={() => setGlobalFormTemplate(null)} 
-            onSave={(response) => { handleSaveResponse(response); setGlobalFormTemplate(null); }}
+            initialData={globalFormData}
+            onClose={() => { setGlobalFormTemplate(null); setGlobalFormData({}); }} 
+            onSave={(response) => { handleSaveResponse(response); setGlobalFormTemplate(null); setGlobalFormData({}); }}
           />
       )}
       
@@ -250,10 +824,22 @@ const App: React.FC = () => {
                 
                 {/* Logo et Titre */}
                 <div className="text-center mb-10">
-                   <div className="inline-flex p-6 bg-white/5 backdrop-blur-xl rounded-full border border-white/10 mb-6 shadow-2xl relative group hover:scale-105 transition-transform duration-500">
-                      <div className="absolute inset-0 bg-indigo-500/20 rounded-full blur-xl group-hover:bg-indigo-500/30 transition-all"></div>
-                      <img src={appSettings.appLogoUrl || DEFAULT_APP_LOGO} alt="Logo" className="h-20 w-auto object-contain relative z-10 drop-shadow-2xl" />
+                   {/* Container pillule pour les logos */}
+                   <div className="inline-flex p-6 bg-white/5 backdrop-blur-xl rounded-[2rem] border border-white/10 mb-6 shadow-2xl relative group hover:scale-105 transition-transform duration-500 items-center justify-center gap-6">
+                      <div className="absolute inset-0 bg-indigo-500/20 rounded-[2rem] blur-xl group-hover:bg-indigo-500/30 transition-all"></div>
+                      
+                      {/* Logo Principal (Logo 2 ou 1) */}
+                      <img src={mainDisplayLogo} alt="Logo Principal" className="h-20 w-auto object-contain relative z-10 drop-shadow-2xl" />
+                      
+                      {/* Logo Secondaire (Logo 3) avec séparateur si présent */}
+                      {logo3 && (
+                        <>
+                            <div className="h-12 w-px bg-white/20 relative z-10"></div>
+                            <img src={logo3} alt="Logo Secondaire" className="h-20 w-auto object-contain relative z-10 drop-shadow-2xl" />
+                        </>
+                      )}
                    </div>
+                   
                    <h1 className="text-5xl font-black text-white uppercase tracking-tighter mb-3 drop-shadow-lg">
                       {appSettings.appName}
                    </h1>
@@ -368,345 +954,6 @@ const App: React.FC = () => {
         </main>
       )}
     </div>
-  );
-};
-
-// --- SHARED FORM MODAL COMPONENT (FOR ALL USERS) ---
-interface SharedFormModalProps {
-    user: User;
-    template: FormTemplate;
-    users: User[]; // For manager lookup
-    onClose: () => void;
-    onSave: (response: FormResponse) => void;
-}
-
-const SharedFormModal: React.FC<SharedFormModalProps> = ({ user, template, users, onClose, onSave }) => {
-    const [formData, setFormData] = useState<Record<string, any>>({});
-    const [isSubmitting, setIsSubmitting] = useState(false);
-    const [validationErrors, setValidationErrors] = useState<string[]>([]);
-    const [activeSignatureFieldId, setActiveSignatureFieldId] = useState<string | null>(null);
-    const canvasRef = useRef<HTMLCanvasElement>(null);
-    const [isDrawing, setIsDrawing] = useState(false);
-
-    // Auto-fill Manager Info
-    useEffect(() => {
-        if (template.id === 'tpl-compte-rendu' && formData['manager_id']) {
-            const manager = users.find(u => u.id === formData['manager_id']);
-            if (manager) {
-                setFormData(prev => ({
-                    ...prev,
-                    manager_phone: manager.phone || 'Non renseigné',
-                    manager_email: manager.email || 'Non renseigné'
-                }));
-            }
-        }
-    }, [formData['manager_id'], users, template.id]);
-
-    const handleSave = () => {
-        const errors: string[] = [];
-        template.fields.forEach(f => {
-            if (f.required) {
-                const val = formData[f.id];
-                if (f.type === 'checkbox') {
-                    if (val === undefined || val === null) errors.push(f.label);
-                } else if (f.type === 'photo_gallery') {
-                    // Optional typically, but strict check if needed
-                } else {
-                    if (!val || String(val).trim() === '') errors.push(f.label);
-                }
-            }
-        });
-
-        if (errors.length > 0) {
-            setValidationErrors(errors);
-            const modalContent = document.getElementById('shared-form-modal-content');
-            if (modalContent) modalContent.scrollTo({ top: 0, behavior: 'smooth' });
-            return;
-        }
-
-        setIsSubmitting(true);
-        // Simulate async
-        setTimeout(() => {
-            const response: FormResponse = {
-                id: `res-${Date.now()}`,
-                templateId: template.id,
-                technicianId: user.id,
-                submittedAt: new Date().toISOString(),
-                data: { ...formData }
-            };
-            onSave(response);
-            setIsSubmitting(false);
-        }, 500);
-    };
-
-    // Signature Logic
-    const startDrawing = (e: any) => { setIsDrawing(true); const ctx = canvasRef.current?.getContext('2d'); if(ctx && canvasRef.current) { const rect = canvasRef.current.getBoundingClientRect(); ctx.beginPath(); ctx.moveTo((e.touches ? e.touches[0].clientX : e.clientX) - rect.left, (e.touches ? e.touches[0].clientY : e.clientY) - rect.top); } };
-    const draw = (e: any) => { if (!isDrawing || !canvasRef.current) return; const ctx = canvasRef.current.getContext('2d'); if(ctx) { const rect = canvasRef.current.getBoundingClientRect(); ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.strokeStyle = '#000'; ctx.lineTo((e.touches ? e.touches[0].clientX : e.clientX) - rect.left, (e.touches ? e.touches[0].clientY : e.clientY) - rect.top); ctx.stroke(); } };
-    const endDrawing = () => { setIsDrawing(false); if (canvasRef.current && activeSignatureFieldId) { setFormData(prev => ({ ...prev, [activeSignatureFieldId]: canvasRef.current!.toDataURL('image/png') })); } };
-    const clearSignature = () => { const ctx = canvasRef.current?.getContext('2d'); ctx?.clearRect(0, 0, canvasRef.current!.width, canvasRef.current!.height); if (activeSignatureFieldId) { setFormData(prev => { const n = {...prev}; delete n[activeSignatureFieldId]; return n; }); } };
-
-    return (
-        <div className="fixed inset-0 z-[200] bg-slate-900/70 backdrop-blur-md flex items-center justify-center p-4 print:hidden">
-            {activeSignatureFieldId && (
-                <div className="fixed inset-0 z-[250] bg-slate-900/95 backdrop-blur-sm flex items-center justify-center p-4">
-                <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden border border-slate-200">
-                    <div className="p-5 bg-slate-900 text-white flex justify-between items-center"><h3 className="text-sm font-black uppercase tracking-widest">Signer</h3><button onClick={() => setActiveSignatureFieldId(null)} className="p-2 hover:bg-white/10 rounded-full"><X /></button></div>
-                    <div className="p-8 space-y-6">
-                        <div className="relative border-2 border-slate-200 rounded-2xl bg-slate-50 overflow-hidden h-64 touch-none"><canvas ref={canvasRef} width={500} height={300} onMouseDown={startDrawing} onMouseMove={draw} onMouseUp={endDrawing} onMouseOut={endDrawing} onTouchStart={startDrawing} onTouchMove={draw} onTouchEnd={endDrawing} className="w-full h-full cursor-crosshair" /></div>
-                        <div className="flex gap-4"><button onClick={clearSignature} className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-xl font-black uppercase text-[10px]">Effacer</button><button onClick={() => setActiveSignatureFieldId(null)} className="flex-1 py-4 bg-indigo-600 text-white rounded-xl font-black uppercase text-[10px]">Valider</button></div>
-                    </div>
-                </div>
-                </div>
-            )}
-            <div className="bg-white w-full max-w-2xl rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95">
-                <div className="p-6 bg-indigo-600 text-white flex justify-between items-center shrink-0">
-                    <div className="flex items-center gap-3"><div className="p-2 bg-white/20 rounded-xl"><FileText size={20}/></div><h2 className="text-lg font-black uppercase tracking-tight truncate">{template.name}</h2></div>
-                    <button disabled={isSubmitting} onClick={onClose} className="p-2 hover:bg-white/10 rounded-full"><X /></button>
-                </div>
-                <div id="shared-form-modal-content" className="p-8 md:p-10 overflow-y-auto flex-1 space-y-8 scrollbar-thin bg-white">
-                    {validationErrors.length > 0 && (<div className="bg-red-50 border-2 border-red-200 p-6 rounded-2xl flex items-start gap-4"><AlertCircle className="text-red-600 shrink-0" size={24} /><div><p className="text-sm font-black text-red-800 uppercase mb-1">Erreurs :</p><ul className="list-disc list-inside text-xs font-bold text-red-600">{validationErrors.map((err, i) => <li key={i}>{err}</li>)}</ul></div></div>)}
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                        {template.fields.map(field => (
-                            <div key={field.id} className={`${['textarea','signature','photo','photo_gallery'].includes(field.type) ? 'md:col-span-2' : ''} space-y-2`}>
-                                <label className={`text-[10px] font-black uppercase tracking-widest px-1 ${validationErrors.includes(field.label) ? 'text-red-500' : 'text-slate-400'}`}>{field.label} {field.required && '*'}</label>
-                                {field.type === 'signature' ? (
-                                    <div onClick={() => !isSubmitting && setActiveSignatureFieldId(field.id)} className={`relative h-32 border-2 border-dashed rounded-2xl bg-slate-50 flex items-center justify-center cursor-pointer ${formData[field.id] ? 'border-emerald-500 bg-emerald-50/20' : 'border-slate-200'}`}>{formData[field.id] ? <img src={formData[field.id]} alt="Signed" className="h-full object-contain grayscale" /> : <div className="text-slate-400 flex flex-col items-center gap-1 font-black text-[9px] uppercase"><PenTool size={20}/><p>Signer</p></div>}</div>
-                                ) : field.type === 'photo' ? (
-                                    <label className={`flex flex-col items-center justify-center w-full h-40 border-2 border-dashed rounded-2xl cursor-pointer bg-slate-50 hover:bg-indigo-50/50 ${formData[field.id] ? 'border-emerald-500' : 'border-slate-200'}`}>
-                                        {formData[field.id] ? <div className="relative w-full h-full p-2"><img src={formData[field.id]} className="w-full h-full object-contain rounded-xl" alt="Preview"/><button onClick={(e)=>{e.preventDefault(); setFormData(p=>({...p,[field.id]:null}))}} className="absolute top-2 right-2 bg-red-500 text-white p-1 rounded-full"><X size={12}/></button></div> : <div className="flex flex-col items-center justify-center"><Camera className="w-8 h-8 mb-2 text-slate-400" /><p className="text-xs text-slate-500 font-bold">Prendre une photo</p></div>}
-                                        <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if(f){ const r = new FileReader(); r.onloadend = () => setFormData(p => ({...p, [field.id]: r.result})); r.readAsDataURL(f); }}} />
-                                    </label>
-                                ) : field.type === 'photo_gallery' ? (
-                                    <div className="space-y-4">
-                                        <div className="flex flex-wrap gap-3">
-                                            {Array.isArray(formData[field.id]) && formData[field.id].map((photo: string, idx: number) => (
-                                                <div key={idx} className="relative w-24 h-24 border rounded-xl overflow-hidden group">
-                                                    <img src={photo} alt={`Photo ${idx+1}`} className="w-full h-full object-cover" />
-                                                    <button type="button" onClick={() => {
-                                                        const newPhotos = [...formData[field.id]];
-                                                        newPhotos.splice(idx, 1);
-                                                        setFormData(p => ({...p, [field.id]: newPhotos}));
-                                                    }} className="absolute inset-0 bg-black/50 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={16}/></button>
-                                                </div>
-                                            ))}
-                                            {(!formData[field.id] || formData[field.id].length < 10) && (
-                                                <label className="w-24 h-24 border-2 border-dashed border-slate-200 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 text-slate-400 hover:text-indigo-500 transition-all">
-                                                    <Plus size={24}/>
-                                                    <span className="text-[9px] font-black uppercase mt-1">Ajouter</span>
-                                                    <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => {
-                                                        const file = e.target.files?.[0];
-                                                        if (file) {
-                                                            const reader = new FileReader();
-                                                            reader.onloadend = () => {
-                                                                const current = Array.isArray(formData[field.id]) ? formData[field.id] : [];
-                                                                if(current.length < 10) setFormData(p => ({...p, [field.id]: [...current, reader.result]}));
-                                                            };
-                                                            reader.readAsDataURL(file);
-                                                        }
-                                                    }} />
-                                                </label>
-                                            )}
-                                        </div>
-                                        <p className="text-[10px] text-slate-400 font-bold italic">{Array.isArray(formData[field.id]) ? formData[field.id].length : 0} / 10 photos</p>
-                                    </div>
-                                ) : field.type === 'select' ? (
-                                    <select disabled={isSubmitting || field.readOnly} value={formData[field.id] || ''} onChange={e => setFormData(p => ({...p, [field.id]: e.target.value}))} className="w-full p-5 bg-slate-50 border-2 border-slate-200 rounded-2xl outline-none focus:border-indigo-500 font-bold text-slate-800">
-                                        <option value="">Sélectionner...</option>
-                                        {/* Logic specific for Manager selection */}
-                                        {field.id === 'manager_id' 
-                                            ? users.filter(u => u.role === Role.MANAGER).map(u => <option key={u.id} value={u.id}>{u.name}</option>)
-                                            : field.options?.map(opt => <option key={opt} value={opt}>{opt}</option>)
-                                        }
-                                    </select>
-                                ) : field.type === 'textarea' ? (
-                                    <textarea disabled={isSubmitting || field.readOnly} value={formData[field.id] || ''} onChange={e => setFormData(p => ({...p, [field.id]: e.target.value}))} className="w-full p-5 bg-slate-50 border-2 border-slate-200 rounded-2xl min-h-[140px] outline-none focus:border-indigo-500 font-bold text-slate-800" />
-                                ) : (
-                                    <input disabled={isSubmitting || field.readOnly} type={field.type === 'email' ? 'email' : field.type === 'number' ? 'number' : 'text'} step={field.type === 'number' ? '0.5' : undefined} value={formData[field.id] || ''} onChange={e => setFormData(p => ({...p, [field.id]: e.target.value}))} className={`w-full p-5 bg-slate-50 border-2 rounded-2xl outline-none focus:border-indigo-500 font-bold text-slate-800 ${field.readOnly ? 'bg-slate-100 text-slate-500' : 'border-slate-200'}`} />
-                                )}
-                            </div>
-                        ))}
-                    </div>
-                    <div className="pt-8"><button type="button" disabled={isSubmitting} onClick={handleSave} className="w-full py-6 rounded-3xl font-black uppercase tracking-widest text-sm shadow-2xl bg-slate-900 text-white hover:bg-emerald-600 flex items-center justify-center gap-3">{isSubmitting ? <Loader2 className="animate-spin" /> : <CheckCircle2 />} ENVOYER LE RAPPORT</button></div>
-                </div>
-            </div>
-        </div>
-    );
-};
-
-const FormTemplateManager: React.FC<{ templates: FormTemplate[], onUpdateTemplates: (t: FormTemplate[]) => void }> = ({ templates, onUpdateTemplates }) => {
-  const [editingTemplate, setEditingTemplate] = React.useState<Partial<FormTemplate> | null>(null);
-  const [previewingTemplate, setPreviewingTemplate] = React.useState<FormTemplate | null>(null);
-
-  const handleAddTemplate = () => setEditingTemplate({ id: `tpl-${Date.now()}`, name: 'Nouveau Formulaire', fields: [], description: '' });
-  const handleAddField = () => { if (editingTemplate) setEditingTemplate({ ...editingTemplate, fields: [...(editingTemplate.fields || []), { id: `f-${Date.now()}`, label: 'Nouveau Champ', type: 'text', required: false }] }); };
-  const handleSave = () => {
-    if (!editingTemplate?.name) return;
-    const fullTemplate = { ...editingTemplate, createdAt: editingTemplate.createdAt || new Date().toISOString() } as FormTemplate;
-    onUpdateTemplates([...templates.filter(t => t.id !== fullTemplate.id), fullTemplate]);
-    setEditingTemplate(null);
-  };
-
-  return (
-    <div className="space-y-6">
-       {previewingTemplate && (
-         <div className="fixed inset-0 z-[200] bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
-           <div className="bg-white w-full max-w-2xl rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95">
-             <div className="p-6 bg-slate-900 text-white flex justify-between items-center shrink-0">
-               <div className="flex items-center gap-3"><div className="p-2 bg-white/20 rounded-xl"><Eye size={20}/></div><h2 className="text-lg font-black uppercase tracking-tight truncate">Aperçu : {previewingTemplate.name}</h2></div>
-               <button onClick={() => setPreviewingTemplate(null)} className="p-2 hover:bg-white/10 rounded-full transition-colors"><X /></button>
-             </div>
-             <div className="p-10 overflow-y-auto flex-1 space-y-6 scrollbar-thin">
-                {previewingTemplate.fields.map(field => (
-                  <div key={field.id} className="space-y-2">
-                    <label className="text-[10px] font-black uppercase tracking-widest px-1 text-slate-400">{field.label} {field.required && <span className="text-red-500">*</span>}</label>
-                    { field.type === 'textarea' ? <div className="w-full p-5 bg-slate-50 border-2 rounded-2xl min-h-[120px] border-slate-200"></div>
-                    : field.type === 'signature' ? <div className="w-full p-5 h-32 bg-slate-50 border-2 border-dashed rounded-2xl border-slate-200"></div>
-                    : (field.type === 'photo' || field.type === 'photo_gallery') ? <div className="w-full p-5 h-32 bg-slate-50 border-2 border-dashed rounded-2xl border-slate-200 flex items-center justify-center"><Camera className="text-slate-300"/></div>
-                    : field.type === 'checkbox' ? <div className="w-full p-5 bg-slate-50 border-2 rounded-2xl border-slate-200 font-bold text-slate-400">NON</div>
-                    : <div className="w-full p-5 bg-slate-50 border-2 rounded-2xl border-slate-200"></div> }
-                  </div>
-                ))}
-             </div>
-             <button onClick={() => setPreviewingTemplate(null)} className="m-8 py-5 bg-slate-900 text-white rounded-2xl font-black uppercase text-xs tracking-widest hover:bg-slate-800">Fermer</button>
-           </div>
-         </div>
-       )}
-      <div className="flex justify-between items-center bg-white p-8 rounded-[2rem] border border-slate-200 shadow-sm">
-        <div className="flex items-center gap-5"><div className="bg-blue-600 p-3 rounded-2xl text-white shadow-lg shadow-blue-200"><ClipboardList size={28}/></div><div><h2 className="text-2xl font-black text-slate-800">Gestion des Formulaires</h2><p className="text-slate-500 text-sm font-medium">Définissez les documents techniques pour le terrain.</p></div></div>
-        <button onClick={handleAddTemplate} className="px-8 py-4 bg-slate-800 text-white rounded-2xl font-black text-xs uppercase shadow-xl hover:bg-slate-700 transition-all">+ Créer un modèle</button>
-      </div>
-      {editingTemplate ? (
-        <div className="bg-white p-10 rounded-[2.5rem] border-2 border-blue-500 shadow-2xl animate-in fade-in zoom-in-95">
-          <div className="flex justify-between mb-8 pb-4 border-b"><h3 className="text-xl font-black text-slate-800">Configuration du modèle</h3><button onClick={() => setEditingTemplate(null)} className="text-slate-400 hover:text-red-500"><X /></button></div>
-          <div className="space-y-8">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6"><div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Nom du document</label><input type="text" value={editingTemplate.name || ''} onChange={e => setEditingTemplate({...editingTemplate, name: e.target.value})} className="w-full p-4 bg-slate-50 border rounded-2xl font-bold focus:ring-2 focus:ring-blue-500 outline-none" /></div><div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Description</label><input type="text" value={editingTemplate.description || ''} onChange={e => setEditingTemplate({...editingTemplate, description: e.target.value})} className="w-full p-4 bg-slate-50 border rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none" /></div></div>
-            <div className="space-y-4">
-              <div className="flex items-center justify-between"><h4 className="text-xs font-black text-slate-400 uppercase tracking-widest">Champs du formulaire</h4><button onClick={handleAddField} className="text-xs font-black text-blue-600 hover:underline">+ Ajouter un champ</button></div>
-              <div className="space-y-3">
-                {editingTemplate.fields?.map((field, idx) => (<div key={field.id} className="flex flex-col md:flex-row gap-4 p-5 bg-slate-50 rounded-2xl border border-slate-200 items-center group">
-                    <input type="text" value={field.label} onChange={e => { const newFields = [...editingTemplate.fields!]; newFields[idx].label = e.target.value; setEditingTemplate({...editingTemplate, fields: newFields}); }} className="flex-1 p-3 bg-white border rounded-xl text-sm font-black focus:ring-2 focus:ring-blue-500 outline-none shadow-sm" />
-                    <select value={field.type} onChange={e => { const newFields = [...editingTemplate.fields!]; newFields[idx].type = e.target.value as any; setEditingTemplate({...editingTemplate, fields: newFields}); }} className="w-full md:w-auto p-3 bg-white border rounded-xl text-xs font-black focus:ring-2 focus:ring-blue-500 outline-none shadow-sm"><option value="text">Texte Court</option><option value="textarea">Zone de texte</option><option value="number">Nombre</option><option value="checkbox">Case à cocher (Oui/Non)</option><option value="date">Date</option><option value="signature">Zone de Signature</option><option value="email">Email</option><option value="photo">Photo (Unique)</option><option value="photo_gallery">Galerie Photos (Max 10)</option><option value="select">Liste Déroulante</option></select>
-                    {field.type === 'select' && <input type="text" placeholder="Options (séparées par virgule)" value={field.options?.join(',') || ''} onChange={e => { const newFields = [...editingTemplate.fields!]; newFields[idx].options = e.target.value.split(',').map(s=>s.trim()); setEditingTemplate({...editingTemplate, fields: newFields}); }} className="w-40 p-3 bg-white border rounded-xl text-xs font-black focus:ring-2 focus:ring-blue-500 outline-none shadow-sm" />}
-                    <div className="flex items-center gap-2"><input type="checkbox" checked={field.readOnly} onChange={e => { const newFields = [...editingTemplate.fields!]; newFields[idx].readOnly = e.target.checked; setEditingTemplate({...editingTemplate, fields: newFields}); }} /><span className="text-[10px] uppercase font-black text-slate-400">Lecture seule</span></div>
-                    <button onClick={() => { const newFields = editingTemplate.fields!.filter(f => f.id !== field.id); setEditingTemplate({...editingTemplate, fields: newFields}); }} className="text-red-400 hover:text-red-600 p-2"><Trash2 size={20}/></button>
-                </div>))}
-              </div>
-            </div>
-            <div className="flex gap-4 pt-4"><button onClick={handleSave} className="flex-1 py-5 bg-blue-600 text-white rounded-2xl font-black shadow-xl shadow-blue-200 hover:bg-blue-700 transition-all">ENREGISTRER LE MODELE</button><button onClick={() => setEditingTemplate(null)} className="px-10 py-5 bg-slate-100 text-slate-600 rounded-2xl font-black text-xs uppercase">Annuler</button></div>
-          </div>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {templates.map(t => (<div key={t.id} className="bg-white p-8 rounded-[2rem] border border-slate-200 shadow-sm hover:border-blue-500 transition-all group flex flex-col h-full"><div className="flex justify-between items-start mb-6"><div className="p-4 bg-blue-50 text-blue-600 rounded-2xl group-hover:bg-blue-600 group-hover:text-white transition-all"><ClipboardList size={28}/></div><div className="px-3 py-1 bg-slate-100 rounded-full text-[9px] font-black text-slate-500 uppercase">{t.fields.length} champs</div></div><h3 className="text-xl font-black text-slate-800 tracking-tight">{t.name}</h3><p className="text-xs text-slate-400 mt-2 font-medium flex-1">{t.description || 'Pas de description.'}</p><div className="flex gap-2 mt-8"><button onClick={() => setPreviewingTemplate(t)} className="p-3 text-slate-400 bg-slate-100 hover:bg-blue-600 hover:text-white rounded-xl transition-all"><Eye size={18}/></button><button onClick={() => setEditingTemplate(t)} className="flex-1 py-3 bg-slate-100 text-slate-600 rounded-xl text-xs font-black hover:bg-blue-600 hover:text-white transition-all uppercase tracking-widest">Modifier</button><button onClick={() => { if(confirm("Supprimer?")) onUpdateTemplates(templates.filter(temp => temp.id !== t.id)); }} className="p-3 text-red-500 bg-red-50 hover:bg-red-600 hover:text-white rounded-xl transition-all"><Trash2 size={18}/></button></div></div>))}
-          <button onClick={handleAddTemplate} className="bg-slate-50 border-2 border-dashed border-slate-200 p-8 rounded-[2rem] flex flex-col items-center justify-center gap-4 text-slate-400 hover:border-blue-500 transition-all min-h-[240px]"><Plus size={32}/><span className="font-black text-xs uppercase tracking-widest">Nouveau modèle</span></button>
-        </div>
-      )}
-    </div>
-  );
-};
-
-const GlobalFormsHistory: React.FC<{ responses: FormResponse[], templates: FormTemplate[], users: User[], appSettings: AppSettings }> = ({ responses, templates, users, appSettings }) => {
-  const [selectedResponse, setSelectedResponse] = useState<FormResponse | null>(null);
-  const [search, setSearch] = useState('');
-
-  const filtered = responses.filter(r => {
-      const t = templates.find(t => t.id === r.templateId);
-      const u = users.find(u => u.id === r.technicianId);
-      const searchStr = (search || '').toLowerCase();
-      return (
-          (t?.name || '').toLowerCase().includes(searchStr) ||
-          (u?.name || '').toLowerCase().includes(searchStr) ||
-          (r.data.job_number || '').toLowerCase().includes(searchStr)
-      );
-  }).sort((a,b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
-
-  // Placeholder PDF generation
-  const generatePDF = async (response: FormResponse) => {
-      alert("Fonctionnalité de téléchargement PDF à implémenter.");
-  };
-
-  return (
-      <div className="space-y-6">
-          {selectedResponse && (
-             <div className="fixed inset-0 z-[200] bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
-                <div className="bg-white w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-[2.5rem] p-8 relative animate-in zoom-in-95">
-                    <button onClick={() => setSelectedResponse(null)} className="absolute top-6 right-6 p-2 bg-slate-100 hover:bg-slate-200 rounded-full"><X/></button>
-                    <h2 className="text-2xl font-black text-slate-800 mb-6 uppercase">Détails du rapport</h2>
-                    <div className="space-y-4">
-                         {templates.find(t => t.id === selectedResponse.templateId)?.fields.map(field => (
-                             <div key={field.id} className="border-b border-slate-100 pb-2">
-                                 <p className="text-[10px] font-black text-slate-400 uppercase">{field.label}</p>
-                                 {field.type === 'signature' || field.type === 'photo' ? (
-                                     selectedResponse.data[field.id] ? <img src={selectedResponse.data[field.id]} alt={field.label} className="h-20 object-contain rounded-lg border border-slate-200" /> : <span className="text-xs italic text-slate-400">Non renseigné</span>
-                                 ) : field.type === 'photo_gallery' ? (
-                                      <div className="flex gap-2 flex-wrap">
-                                          {Array.isArray(selectedResponse.data[field.id]) && selectedResponse.data[field.id].map((img: string, i: number) => (
-                                              <img key={i} src={img} className="h-20 w-20 object-cover rounded-lg border border-slate-200" />
-                                          ))}
-                                      </div>
-                                 ) : (
-                                     <p className="text-sm font-bold text-slate-800">
-                                         {field.type === 'checkbox' 
-                                            ? (selectedResponse.data[field.id] ? 'OUI' : 'NON') 
-                                            : (selectedResponse.data[field.id]?.toString() || '-')}
-                                     </p>
-                                 )}
-                             </div>
-                         ))}
-                    </div>
-                    <div className="mt-8 pt-6 border-t flex gap-4">
-                        <button onClick={() => generatePDF(selectedResponse)} className="flex-1 py-4 bg-slate-900 text-white rounded-xl font-black uppercase text-xs">Télécharger PDF</button>
-                    </div>
-                </div>
-             </div>
-          )}
-
-          <div className="flex justify-between items-center bg-white p-8 rounded-[2rem] border border-slate-200 shadow-sm">
-             <div className="flex items-center gap-5">
-                 <div className="bg-blue-600 p-3 rounded-2xl text-white shadow-lg shadow-blue-200"><FileText size={28}/></div>
-                 <div><h2 className="text-2xl font-black text-slate-800">Historique des Rapports</h2><p className="text-slate-500 text-sm font-medium">Consultez et téléchargez les rapports envoyés.</p></div>
-             </div>
-             <div className="relative">
-                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20}/>
-                 <input type="text" placeholder="Rechercher..." value={search} onChange={e => setSearch(e.target.value)} className="pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm outline-none focus:ring-2 focus:ring-indigo-500 w-64" />
-             </div>
-          </div>
-
-          <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl overflow-hidden">
-              <table className="w-full text-left">
-                  <thead className="bg-slate-50 border-b border-slate-100">
-                      <tr>
-                          <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Date</th>
-                          <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Modèle</th>
-                          <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Technicien</th>
-                          <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Affaire / Info</th>
-                          <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Actions</th>
-                      </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                      {filtered.map(r => {
-                          const t = templates.find(temp => temp.id === r.templateId);
-                          const u = users.find(user => user.id === r.technicianId);
-                          return (
-                              <tr key={r.id} className="hover:bg-slate-50/50 transition-colors">
-                                  <td className="px-6 py-4 font-bold text-sm text-slate-800">{format(new Date(r.submittedAt), 'dd/MM/yyyy HH:mm')}</td>
-                                  <td className="px-6 py-4 font-bold text-sm text-indigo-600">{t?.name || 'Inconnu'}</td>
-                                  <td className="px-6 py-4 font-bold text-sm text-slate-600">{u?.name || r.technicianId}</td>
-                                  <td className="px-6 py-4 text-xs font-bold text-slate-500 truncate max-w-xs">{r.data.job_number || r.data.client_name || '-'}</td>
-                                  <td className="px-6 py-4 text-right">
-                                      <button onClick={() => setSelectedResponse(r)} className="p-2 text-slate-400 hover:text-indigo-600 bg-slate-100 hover:bg-indigo-50 rounded-xl transition-all"><Eye size={18}/></button>
-                                  </td>
-                              </tr>
-                          );
-                      })}
-                      {filtered.length === 0 && (
-                          <tr><td colSpan={5} className="p-8 text-center text-slate-400 font-bold">Aucun rapport trouvé.</td></tr>
-                      )}
-                  </tbody>
-              </table>
-          </div>
-      </div>
   );
 };
 
