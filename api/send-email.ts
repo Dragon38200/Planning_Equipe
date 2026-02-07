@@ -1,11 +1,12 @@
 import { Resend } from 'resend';
+import { Buffer } from 'node:buffer';
 
 export const config = {
   runtime: 'edge',
 };
 
 export default async function handler(request: Request) {
-  // CORS Headers for development if needed, though usually handled by Vite proxy / Vercel rewrites
+  // CORS Headers for development if needed
   const headers = {
     'Content-Type': 'application/json',
   };
@@ -15,9 +16,9 @@ export default async function handler(request: Request) {
   }
 
   try {
-    const { to, subject, html } = await request.json();
+    const body = await request.json();
+    const { to, subject, html, attachments } = body;
     
-    // Utilisation de la variable d'environnement (prioritaire) ou de la clé fournie
     const apiKey = process.env.RESEND_API_KEY || 're_hJiidYri_G9N3eQiPE4Kjg4oEKG4A4kuM';
 
     if (!apiKey) {
@@ -26,18 +27,24 @@ export default async function handler(request: Request) {
     }
 
     const resend = new Resend(apiKey);
-
-    // Note: 'onboarding@resend.dev' est l'adresse par défaut pour le testing Resend.
-    // Cela ne fonctionne que vers l'email administrateur du compte Resend.
-    // Pour la production, validez un domaine et utilisez 'ne-pas-repondre@votre-domaine.com'
     const fromEmail = 'Planit-Mounier <onboarding@resend.dev>'; 
 
-    const data = await resend.emails.send({
+    const emailPayload: any = {
       from: fromEmail,
       to: [to], 
       subject: subject,
       html: html,
-    });
+    };
+
+    // Gestion des pièces jointes (PDF)
+    if (attachments && Array.isArray(attachments)) {
+        emailPayload.attachments = attachments.map((att: any) => ({
+            filename: att.filename,
+            content: Buffer.from(att.content, 'base64'),
+        }));
+    }
+
+    const data = await resend.emails.send(emailPayload);
 
     if (data.error) {
         console.error("Resend API Error:", data.error);
