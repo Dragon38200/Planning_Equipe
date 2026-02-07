@@ -7,9 +7,15 @@ import TechnicianDashboard from './components/TechnicianDashboard';
 import ManagerDashboard from './components/ManagerDashboard';
 import AdminDashboard from './components/AdminDashboard';
 import MissionManager from './components/MissionManager';
-import { LogOut, Factory, Calendar, ClipboardList, BookOpen, Search, Eye, FileText, CheckCircle2, X, Trash2, Plus, Printer, AlertCircle, Settings, FileSpreadsheet, Download, Briefcase, Lock, ArrowRight, User as UserIcon, Loader2, PenTool, CheckSquare, Square, Camera, FilePlus, Mail } from 'lucide-react';
+import { LogOut, Factory, Calendar, ClipboardList, BookOpen, Search, Eye, FileText, CheckCircle2, X, Trash2, Plus, Printer, AlertCircle, Settings, FileSpreadsheet, Download, Briefcase, Lock, ArrowRight, User as UserIcon, Loader2, PenTool, CheckSquare, Square, Camera, FilePlus, Mail, Image as ImageIcon } from 'lucide-react';
 import { format } from 'date-fns';
 import { fr } from 'date-fns/locale';
+// @ts-ignore
+import html2canvas from 'html2canvas';
+// @ts-ignore
+import { jsPDF } from 'jspdf';
+// @ts-ignore
+import JSZip from 'jszip';
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = React.useState<User | null>(null);
@@ -228,7 +234,7 @@ const App: React.FC = () => {
                       {appSettings.appName}
                    </h1>
                    <div className="h-1 w-20 bg-gradient-to-r from-transparent via-indigo-500 to-transparent mx-auto mb-4 opacity-80"></div>
-                   <p className="text-indigo-200/70 font-bold text-sm uppercase tracking-widest">Portail Interventions & Rapports</p>
+                   <p className="text-indigo-200/70 font-bold text-sm uppercase tracking-widest">PORTAIL DE GESTION DES INTERVENTIONS DE MOUNIER ELECTRICITE</p>
                 </div>
 
                 {/* Carte de Connexion */}
@@ -537,39 +543,57 @@ const GlobalFormsHistory: React.FC<{ responses: FormResponse[], templates: FormT
 
     setIsSendingEmail(true);
 
-    // Construction d'un résumé HTML propre
-    const template = templates.find(t => t.id === selectedResponse.templateId);
-    let htmlContent = `<div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto;">`;
-    htmlContent += `<h2 style="color: #4F46E5;">${template?.name} - ${selectedResponse.data.job_number || 'N/A'}</h2>`;
-    htmlContent += `<p><strong>Client :</strong> ${selectedResponse.data.client_name || 'N/A'}</p>`;
-    htmlContent += `<p><strong>Date :</strong> ${format(new Date(selectedResponse.submittedAt), 'dd/MM/yyyy HH:mm')}</p>`;
-    htmlContent += `<hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;"/>`;
-    
-    // Champs principaux
-    template?.fields.forEach(f => {
-        const val = selectedResponse.data[f.id];
-        if (val && !['signature', 'photo', 'photo_gallery'].includes(f.type)) {
-             htmlContent += `<p style="margin: 8px 0;"><strong>${f.label} :</strong> <br/>${f.type === 'checkbox' ? (val ? 'OUI' : 'NON') : String(val).replace(/\n/g, '<br/>')}</p>`;
-        }
-    });
-    
-    htmlContent += `<br/><p style="font-size: 12px; color: #888;"><em>Document généré automatiquement par l'application Planit-Mounier.</em></p></div>`;
-
     try {
+        // --- 1. GÉNÉRATION DU PDF (via html2canvas + jsPDF) ---
+        const reportElement = document.getElementById('printable-report');
+        if (!reportElement) throw new Error("Élément de rapport introuvable pour la génération PDF.");
+
+        // On utilise html2canvas pour capturer le rendu visuel
+        const canvas = await html2canvas(reportElement, { 
+            scale: 1.5, // Qualité correcte sans être trop lourde
+            useCORS: true, // Pour gérer les images externes si besoin
+            logging: false
+        });
+
+        const imgData = canvas.toDataURL('image/jpeg', 0.8); // Compression JPEG 80%
+        const pdf = new jsPDF('p', 'mm', 'a4');
+        const pdfWidth = pdf.internal.pageSize.getWidth();
+        const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+        
+        pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+        const pdfBase64 = pdf.output('datauristring').split(',')[1]; // On retire le préfixe data:application/pdf;base64,
+
+        // --- 2. CONSTRUCTION DU CORPS DU MAIL HTML ---
+        const template = templates.find(t => t.id === selectedResponse.templateId);
+        let htmlContent = `<div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px; margin: 0 auto;">`;
+        htmlContent += `<h2 style="color: #4F46E5;">${template?.name} - ${selectedResponse.data.job_number || 'N/A'}</h2>`;
+        htmlContent += `<p><strong>Client :</strong> ${selectedResponse.data.client_name || 'N/A'}</p>`;
+        htmlContent += `<p><strong>Date :</strong> ${format(new Date(selectedResponse.submittedAt), 'dd/MM/yyyy HH:mm')}</p>`;
+        htmlContent += `<hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;"/>`;
+        htmlContent += `<p>Veuillez trouver ci-joint le rapport d'intervention au format PDF.</p>`;
+        htmlContent += `<br/><p style="font-size: 12px; color: #888;"><em>Document généré automatiquement par l'application Planit-Mounier.</em></p></div>`;
+
+        // --- 3. APPEL API ---
         const res = await fetch('/api/send-email', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
                 to: emailTo,
                 subject: `Rapport Intervention: ${selectedResponse.data.job_number || 'N/A'} - ${selectedResponse.data.client_name || 'Client'}`,
-                html: htmlContent
+                html: htmlContent,
+                attachments: [
+                    {
+                        filename: `Rapport_${selectedResponse.data.job_number || 'Intervention'}.pdf`,
+                        content: pdfBase64
+                    }
+                ]
             })
         });
         
         const result = await res.json();
 
         if (res.ok) {
-             alert(`Email envoyé avec succès à ${emailTo} !`);
+             alert(`Email envoyé avec succès à ${emailTo} avec le PDF en pièce jointe !`);
         } else {
              console.error("Erreur Resend:", result);
              alert(`Erreur lors de l'envoi : ${result.error || 'Erreur inconnue'}`);
@@ -581,6 +605,80 @@ const GlobalFormsHistory: React.FC<{ responses: FormResponse[], templates: FormT
     } finally {
         setIsSendingEmail(false);
     }
+  };
+
+  const handleDownloadPhotos = async (response: FormResponse) => {
+      const template = templates.find(t => t.id === response.templateId);
+      if (!template) return;
+
+      const zip = new JSZip();
+      let photoCount = 0;
+
+      // Parcourir les champs pour trouver les photos
+      template.fields.forEach(field => {
+          if (field.type === 'photo') {
+              const data = response.data[field.id];
+              if (data && typeof data === 'string' && data.startsWith('data:image')) {
+                  const extension = data.substring("data:image/".length, data.indexOf(";base64"));
+                  zip.file(`${field.label.replace(/\s+/g, '_')}.${extension}`, data.split(',')[1], {base64: true});
+                  photoCount++;
+              }
+          } else if (field.type === 'photo_gallery') {
+              const data = response.data[field.id]; // Array of strings
+              if (Array.isArray(data)) {
+                  data.forEach((imgStr, idx) => {
+                      if (typeof imgStr === 'string' && imgStr.startsWith('data:image')) {
+                          const extension = imgStr.substring("data:image/".length, imgStr.indexOf(";base64"));
+                          zip.file(`${field.label.replace(/\s+/g, '_')}_${idx+1}.${extension}`, imgStr.split(',')[1], {base64: true});
+                          photoCount++;
+                      }
+                  });
+              }
+          }
+          // Pour les champs génériques qui pourraient être des photos (fallback)
+          else if (typeof response.data[field.id] === 'string' && String(response.data[field.id]).startsWith('data:image')) {
+             // Avoid duplicating if already handled
+          }
+      });
+
+      // Gestion des photos génériques hors template (si clés manuelles)
+      Object.entries(response.data).forEach(([key, val]) => {
+          if (key.includes('photo') && !template.fields.find(f => f.id === key)) {
+             if (typeof val === 'string' && val.startsWith('data:image')) {
+                  const extension = val.substring("data:image/".length, val.indexOf(";base64"));
+                  zip.file(`${key}.${extension}`, val.split(',')[1], {base64: true});
+                  photoCount++;
+             } else if (Array.isArray(val)) {
+                 val.forEach((v, i) => {
+                     if (typeof v === 'string' && v.startsWith('data:image')) {
+                        const extension = v.substring("data:image/".length, v.indexOf(";base64"));
+                        zip.file(`${key}_${i+1}.${extension}`, v.split(',')[1], {base64: true});
+                        photoCount++;
+                     }
+                 });
+             }
+          }
+      });
+
+      if (photoCount === 0) {
+          alert("Aucune photo trouvée dans ce rapport.");
+          return;
+      }
+
+      try {
+          const content = await zip.generateAsync({type:"blob"});
+          const url = URL.createObjectURL(content);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = `Photos_${response.data.job_number || 'Rapport'}.zip`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(url);
+      } catch (e) {
+          console.error("Erreur ZIP:", e);
+          alert("Erreur lors de la création de l'archive ZIP.");
+      }
   };
 
   const handleExportResponseCSV = () => {
@@ -875,7 +973,7 @@ const GlobalFormsHistory: React.FC<{ responses: FormResponse[], templates: FormT
                </div>
                <div className="flex items-center gap-3">
                   <button disabled={isSendingEmail} onClick={handleSendEmail} className={`px-5 py-3 rounded-xl text-[10px] font-black flex items-center gap-2 uppercase transition-all shadow-lg active:scale-95 ${isSendingEmail ? 'bg-slate-700 text-slate-400' : 'bg-slate-800 text-white hover:bg-slate-700'}`}>
-                      {isSendingEmail ? <Loader2 className="animate-spin" size={16}/> : <Mail size={16}/>} EMAIL
+                      {isSendingEmail ? <Loader2 className="animate-spin" size={16}/> : <Mail size={16}/>} EMAIL (PDF)
                   </button>
                   <button onClick={handleExportResponseCSV} className="px-5 py-3 bg-emerald-600 text-white rounded-xl text-[10px] font-black flex items-center gap-2 uppercase hover:bg-emerald-700 transition-all shadow-lg active:scale-95"><FileSpreadsheet size={16}/> EXPORTER CSV</button>
                   <button onClick={handlePrint} className="px-5 py-3 bg-indigo-600 text-white rounded-xl text-[10px] font-black flex items-center gap-2 uppercase hover:bg-indigo-700 transition-all shadow-lg active:scale-95"><Printer size={16}/> IMPRIMER PDF</button>
@@ -907,7 +1005,28 @@ const GlobalFormsHistory: React.FC<{ responses: FormResponse[], templates: FormT
            {sortedResponses.map(r => {
                 const tech = users.find(u => u.id === r.technicianId);
                 const tpl = templates.find(t => t.id === r.templateId);
-                return (<div key={r.id} className="p-6 flex items-center justify-between group hover:bg-slate-50/50 transition-all"><div className="flex items-center gap-6"><div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${r.data.acceptance_type ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>{r.data.acceptance_type ? <CheckCircle2 size={24}/> : <FileText size={24}/>}</div><div><div className="flex items-center gap-2 mb-1"><p className="font-black text-slate-800 text-sm uppercase">{tpl?.name || 'Rapport'} • {r.data.job_number || 'N/A'}</p>{r.data.client_name && <span className="px-2 py-0.5 bg-slate-100 rounded-md text-[9px] font-black text-slate-400 uppercase tracking-tighter">{r.data.client_name}</span>}</div><p className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">Le {format(new Date(r.submittedAt), 'Pp', {locale: fr})} par {tech?.name || r.technicianId}</p></div></div><button onClick={() => setSelectedResponse(r)} className="px-6 py-3 bg-white border border-slate-200 text-slate-600 rounded-xl text-[10px] font-black uppercase hover:bg-indigo-600 hover:text-white hover:border-indigo-600 transition-all flex items-center gap-2 shadow-sm"><Eye size={16}/> Consulter / Imprimer</button></div>);
+                return (
+                    <div key={r.id} className="p-6 flex items-center justify-between group hover:bg-slate-50/50 transition-all">
+                        <div className="flex items-center gap-6">
+                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${r.data.acceptance_type ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>{r.data.acceptance_type ? <CheckCircle2 size={24}/> : <FileText size={24}/>}</div>
+                            <div>
+                                <div className="flex items-center gap-2 mb-1">
+                                    <p className="font-black text-slate-800 text-sm uppercase">{tpl?.name || 'Rapport'} • {r.data.job_number || 'N/A'}</p>
+                                    {r.data.client_name && <span className="px-2 py-0.5 bg-slate-100 rounded-md text-[9px] font-black text-slate-400 uppercase tracking-tighter">{r.data.client_name}</span>}
+                                </div>
+                                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">Le {format(new Date(r.submittedAt), 'Pp', {locale: fr})} par {tech?.name || r.technicianId}</p>
+                            </div>
+                        </div>
+                        <div className="flex gap-2">
+                             <button onClick={() => handleDownloadPhotos(r)} className="px-4 py-3 bg-white border border-slate-200 text-slate-400 rounded-xl text-[10px] font-black uppercase hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-all flex items-center gap-2 shadow-sm" title="Télécharger les photos (ZIP)">
+                                <ImageIcon size={16}/> <span className="hidden sm:inline">Photos</span>
+                            </button>
+                            <button onClick={() => setSelectedResponse(r)} className="px-6 py-3 bg-white border border-slate-200 text-slate-600 rounded-xl text-[10px] font-black uppercase hover:bg-indigo-600 hover:text-white hover:border-indigo-600 transition-all flex items-center gap-2 shadow-sm">
+                                <Eye size={16}/> Consulter / Imprimer
+                            </button>
+                        </div>
+                    </div>
+                );
            })}
         </div>
       </div>
