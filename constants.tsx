@@ -7,7 +7,7 @@ export const DEFAULT_ADMIN: User = {
   initials: 'AD', 
   role: Role.ADMIN,
   password: 'admin',
-  email: 'admin@mounier.fr',
+  email: 'a-mounier@mouniersas.fr',
   phone: '0600000000'
 };
 
@@ -15,15 +15,15 @@ export const DEFAULT_ADMIN: User = {
 export const DEFAULT_APP_LOGO = "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNTEyIiBoZWlnaHQ9IjUxMiIgdmlld0JveD0iMCAwIDUxMiA1MTIiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHJlY3Qgd2lkdGg9IjUxMiIgaGVpZ2h0PSI1MTIiIHJ4PSIxMjgiIGZpbGw9IiM0RjQ2RTUiLz48cGF0aCBkPSJNMTI4IDM4NEgzODRWMjMwTDMwOS4zMzMgMjgxLjMzM1YyMDQuNjY3TDIzNC42NjcgMjU2VjE3OS4zMzNMMTI4IDI1NlYzODRaIiBmaWxsPSJ3aGl0ZSIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIzMCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPjxjaXJjbGUgY3g9IjE5MiIgY3k9IjMyMCIgcj0iMjQiIGZpbGw9IiM0RjQ2RTUiLz48Y2lyY2xlIGN4PSIyNTYiIGN5PSIzMjAiIHI9IjI0IiBmaWxsPSIjNEY0NkU1Ii8+PGNpcmNsZSBjeD0iMzIwIiBjeT0iMzIwIiByPSIyNCIgZmlsbD0iIzRGNDZFNSIvPjwvc3ZnPg==";
 
 export const INITIAL_MANAGERS: User[] = [
-  { id: 'grebert.r', name: 'Remi Grebert', initials: 'RG', role: Role.MANAGER, password: '1234', email: 'remi.grebert@mounier.fr', phone: '06 12 34 56 78' },
-  { id: 'gardon.a', name: 'Arnaud Gardon', initials: 'AG', role: Role.MANAGER, password: '1234', email: 'arnaud.gardon@mounier.fr', phone: '06 98 76 54 32' },
-  { id: 'dombey.s', name: 'Sebastien Dombey', initials: 'SD', role: Role.MANAGER, password: '1234', email: 'sebastien.dombey@mounier.fr', phone: '06 11 22 33 44' },
-  { id: 'duffet.y', name: 'Yoann Duffet', initials: 'YD', role: Role.MANAGER, password: '1234', email: 'yoann.duffet@mounier.fr', phone: '06 55 44 33 22' },
-  { id: 'goncalves.f', name: 'Francis Goncalves', initials: 'FG', role: Role.MANAGER, password: '1234', email: 'francis.goncalves@mounier.fr', phone: '06 66 77 88 99' },
-  { id: 'saidi.h', name: 'Heidi Saidi', initials: 'HS', role: Role.MANAGER, password: '1234', email: 'heidi.saidi@mounier.fr', phone: '06 00 11 22 33' },
-  { id: 'mounier.j', name: 'Johan Mounier', initials: 'JM', role: Role.MANAGER, password: '1234', email: 'johan.mounier@mounier.fr', phone: '06 99 88 77 66' },
-  { id: 'martins.p', name: 'Philippe Martins', initials: 'PM', role: Role.MANAGER, password: '1234', email: 'philippe.martins@mounier.fr', phone: '06 44 55 66 77' },
-  { id: 'mercier.f', name: 'Francois Mercier', initials: 'FM', role: Role.MANAGER, password: '1234', email: 'francis.mercier@mounier.fr', phone: '06 22 33 44 55' },
+  { id: 'grebert.r', name: 'Remi Grebert', initials: 'RG', role: Role.MANAGER, password: '1234', email: 'remi.grebert@mouniersas.fr', phone: '06 12 34 56 78' },
+  { id: 'gardon.a', name: 'Arnaud Gardon', initials: 'AG', role: Role.MANAGER, password: '1234', email: 'arnaud.gardon@mouniersas.fr', phone: '06 98 76 54 32' },
+  { id: 'dombey.s', name: 'Sebastien Dombey', initials: 'SD', role: Role.MANAGER, password: '1234', email: 'sebastien.dombey@mouniersas.fr', phone: '06 11 22 33 44' },
+  { id: 'duffet.y', name: 'Yoann Duffet', initials: 'YD', role: Role.MANAGER, password: '1234', email: 'yoann.duffet@mouniersas.fr', phone: '06 55 44 33 22' },
+  { id: 'goncalves.f', name: 'Francis Goncalves', initials: 'FG', role: Role.MANAGER, password: '1234', email: 'francis.goncalves@mouniersas.fr', phone: '06 66 77 88 99' },
+  { id: 'saidi.h', name: 'Heidi Saidi', initials: 'HS', role: Role.MANAGER, password: '1234', email: 'heidi.saidi@mouniersas.fr', phone: '06 00 11 22 33' },
+  { id: 'mounier.j', name: 'Johan Mounier', initials: 'JM', role: Role.MANAGER, password: '1234', email: 'johan.mounier@mouniersas.fr', phone: '06 99 88 77 66' },
+  { id: 'martins.p', name: 'Philippe Martins', initials: 'PM', role: Role.MANAGER, password: '1234', email: 'philippe.martins@mouniersas.fr', phone: '06 44 55 66 77' },
+  { id: 'mercier.f', name: 'Francois Mercier', initials: 'FM', role: Role.MANAGER, password: '1234', email: 'francis.mercier@mouniersas.fr', phone: '06 22 33 44 55' },
 ];
 
 export const INITIAL_TECHNICIANS: User[] = [
