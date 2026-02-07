@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { User, Role, AppSettings, Mission, MissionType, MissionStatus } from '../types';
+import { User, Role, AppSettings, Mission, MissionType, MissionStatus, FormField } from '../types';
 import { exportToCSV, parseCSV, normalizeString } from '../utils';
 import { 
   UserPlus, Trash2, Edit2, Settings, X, 
@@ -22,7 +22,7 @@ const AdminDashboard: React.FC<Props> = ({ users, onUpdateUsers, appSettings, on
   const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formData, setFormData] = useState<Partial<User>>({
-    name: '', initials: '', role: Role.TECHNICIAN, id: '', email: '', password: '', avatarUrl: ''
+    name: '', initials: '', role: Role.TECHNICIAN, id: '', email: '', phone: '', password: '', avatarUrl: ''
   });
 
   const [isProcessing, setIsProcessing] = useState(false);
@@ -200,6 +200,7 @@ const AdminDashboard: React.FC<Props> = ({ users, onUpdateUsers, appSettings, on
           role,
           password: (idxPass !== -1 ? row[idxPass] : '1234') || '1234',
           email: '',
+          phone: '',
           avatarUrl: ''
         } as User;
       }).filter(u => u !== null) as User[];
@@ -215,10 +216,19 @@ const AdminDashboard: React.FC<Props> = ({ users, onUpdateUsers, appSettings, on
 
   const handleSaveUser = () => {
     if (!formData.id || !formData.name || !formData.initials || !formData.password) { showStatus('error', "Champs requis."); return; }
-    const newUser: User = { id: formData.id.toLowerCase().replace(/\s/g, ''), name: formData.name, initials: formData.initials, role: formData.role || Role.TECHNICIAN, password: formData.password, email: formData.email || '', avatarUrl: formData.avatarUrl || '' };
+    const newUser: User = { 
+        id: formData.id.toLowerCase().replace(/\s/g, ''), 
+        name: formData.name, 
+        initials: formData.initials, 
+        role: formData.role || Role.TECHNICIAN, 
+        password: formData.password, 
+        email: formData.email || '', 
+        phone: formData.phone || '',
+        avatarUrl: formData.avatarUrl || '' 
+    };
     if (editingId) onUpdateUsers(users.map(u => u.id === editingId ? newUser : u), editingId, formData.id);
     else onUpdateUsers([...users, newUser]);
-    setIsAdding(false); setEditingId(null); setFormData({ name: '', initials: '', role: Role.TECHNICIAN, id: '', email: '', password: '', avatarUrl: '' });
+    setIsAdding(false); setEditingId(null); setFormData({ name: '', initials: '', role: Role.TECHNICIAN, id: '', email: '', phone: '', password: '', avatarUrl: '' });
   };
   
   const managers = users.filter(u => u.role === Role.MANAGER);
@@ -237,7 +247,7 @@ const AdminDashboard: React.FC<Props> = ({ users, onUpdateUsers, appSettings, on
             <tbody>
               {userList.map(user => (
                 <tr key={user.id} className="border-b border-slate-50 last:border-b-0">
-                  <td className="px-4 py-3"><div className="flex items-center gap-3"><div className="w-9 h-9 bg-slate-100 rounded-full flex items-center justify-center font-black text-[10px] text-slate-500">{user.initials}</div><div><p className="font-bold text-sm text-slate-800">{user.name}</p></div></div></td>
+                  <td className="px-4 py-3"><div className="flex items-center gap-3"><div className="w-9 h-9 bg-slate-100 rounded-full flex items-center justify-center font-black text-[10px] text-slate-500">{user.initials}</div><div><p className="font-bold text-sm text-slate-800">{user.name}</p><p className="text-[9px] text-slate-400">{user.phone}</p></div></div></td>
                   <td className="px-4 py-3">
                       <div className="flex justify-between items-center">
                         <span className="font-mono text-sm text-slate-500">{user.id}</span>
@@ -372,7 +382,7 @@ const AdminDashboard: React.FC<Props> = ({ users, onUpdateUsers, appSettings, on
       <div className="bg-white p-8 rounded-3xl border border-slate-200/80 shadow-xl shadow-slate-200/40">
         <div className="flex justify-between items-center mb-6">
           <div className="flex items-center gap-5"><div className="bg-slate-100 p-3.5 rounded-2xl text-slate-500"><Contact size={28}/></div><div><h1 className="text-2xl font-black text-slate-800 tracking-tight">Gestion de l'équipe</h1><p className="text-slate-400 text-xs font-medium uppercase tracking-wider">{users.length} membres</p></div></div>
-          <button onClick={() => { setIsAdding(true); setEditingId(null); setFormData({name:'', initials:'', role: Role.TECHNICIAN, id:'', password:'1234'})}} className="px-6 py-4 bg-slate-800 text-white rounded-2xl text-xs font-black uppercase flex items-center gap-2 shadow-lg hover:bg-slate-700"><UserPlus size={16}/> Ajouter</button>
+          <button onClick={() => { setIsAdding(true); setEditingId(null); setFormData({name:'', initials:'', role: Role.TECHNICIAN, id:'', password:'1234', phone: '', email: ''})}} className="px-6 py-4 bg-slate-800 text-white rounded-2xl text-xs font-black uppercase flex items-center gap-2 shadow-lg hover:bg-slate-700"><UserPlus size={16}/> Ajouter</button>
         </div>
         
         {/* Formulaire d'ajout/édition */}
@@ -384,6 +394,8 @@ const AdminDashboard: React.FC<Props> = ({ users, onUpdateUsers, appSettings, on
                     <div><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Initiales</label><input type="text" placeholder="PN" value={formData.initials || ''} onChange={e => setFormData({...formData, initials: e.target.value.toUpperCase()})} className="w-full mt-1 bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500"/></div>
                     <div><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Rôle</label><select value={formData.role} onChange={e => setFormData({...formData, role: e.target.value as Role})} className="w-full mt-1 bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500"><option value={Role.TECHNICIAN}>Technicien</option><option value={Role.MANAGER}>Chargé d'Affaires</option><option value={Role.ADMIN}>Administrateur</option></select></div>
                     <div><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Mot de passe</label><input type="text" value={formData.password || ''} onChange={e => setFormData({...formData, password: e.target.value})} className="w-full mt-1 bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500"/></div>
+                    <div><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Téléphone</label><input type="text" value={formData.phone || ''} onChange={e => setFormData({...formData, phone: e.target.value})} className="w-full mt-1 bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500"/></div>
+                    <div><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Email</label><input type="text" value={formData.email || ''} onChange={e => setFormData({...formData, email: e.target.value})} className="w-full mt-1 bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500"/></div>
                 </div>
                  <div className="flex justify-end gap-4">
                     <button onClick={() => {setIsAdding(false); setEditingId(null);}} className="px-6 py-3 bg-slate-100 text-slate-500 rounded-xl text-xs font-black uppercase">Annuler</button>

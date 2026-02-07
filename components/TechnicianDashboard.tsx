@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { User, Mission, WeekSelection, MissionType, MissionStatus, FormTemplate, FormResponse, FormField } from '../types';
 import { getWeekDates, formatFrenchDate, isSunday } from '../utils';
-import { CheckSquare, Square, X, FileText, Plus, CheckCircle2, PenTool, Loader2, AlertCircle, MapPin, ShieldCheck, ShieldX, Clock, Map, List, Navigation } from 'lucide-react';
+import { CheckSquare, Square, X, FileText, Plus, CheckCircle2, PenTool, Loader2, AlertCircle, MapPin, ShieldCheck, ShieldX, Clock, Map, List, Navigation, Camera, Trash2 } from 'lucide-react';
 import { format, isSameDay } from 'date-fns';
 
 interface Props {
@@ -161,9 +161,7 @@ const TechnicianDashboard: React.FC<Props> = ({ user, missions, week, onUpdateMi
         const lastJobResponse = [...responses].reverse().find(r => r.data.job_number === mission.jobNumber);
         setFormData({
           job_number: mission.jobNumber,
-          // Utilise l'adresse de la mission, sinon rien
           address: mission.address || '',
-          // Utilise la description de la mission pour le libellé, sinon tente l'historique
           job_label: mission.description || lastJobResponse?.data.job_label || '',
           client_name: lastJobResponse?.data.client_name || '',
           cmd_number: lastJobResponse?.data.cmd_number || '',
@@ -190,9 +188,10 @@ const TechnicianDashboard: React.FC<Props> = ({ user, missions, week, onUpdateMi
     selectedTemplate.fields.forEach(f => {
       if (f.required) {
         const val = formData[f.id];
-        // Pour les checkbox, false est une valeur valide
         if (f.type === 'checkbox') {
           if (val === undefined || val === null) errors.push(f.label);
+        } else if (f.type === 'photo_gallery') {
+           // Photos are usually optional but check if required logic is needed
         } else {
           if (!val || String(val).trim() === '') errors.push(f.label);
         }
@@ -201,7 +200,6 @@ const TechnicianDashboard: React.FC<Props> = ({ user, missions, week, onUpdateMi
 
     if (errors.length > 0) {
       setValidationErrors(errors);
-      // On scrolle vers le haut de la modale pour montrer les erreurs
       const modalContent = document.getElementById('form-modal-content');
       if (modalContent) modalContent.scrollTo({ top: 0, behavior: 'smooth' });
       return;
@@ -210,7 +208,6 @@ const TechnicianDashboard: React.FC<Props> = ({ user, missions, week, onUpdateMi
     setIsSubmitting(true);
     setValidationErrors([]);
 
-    // On utilise un try/finally sans délai pour garantir l'exécution
     try {
       const response: FormResponse = {
         id: `res-${Date.now()}`,
@@ -222,8 +219,6 @@ const TechnicianDashboard: React.FC<Props> = ({ user, missions, week, onUpdateMi
       };
 
       onSaveResponse(response);
-      
-      // Fermeture immédiate
       setActiveFormMission(null);
       setSelectedTemplate(null);
       setFormData({});
@@ -303,8 +298,6 @@ const TechnicianDashboard: React.FC<Props> = ({ user, missions, week, onUpdateMi
             </div>
             
             <div id="form-modal-content" className="p-8 md:p-10 overflow-y-auto flex-1 space-y-8 scrollbar-thin bg-white">
-              
-              {/* Message d'erreur si champs manquants */}
               {validationErrors.length > 0 && (
                 <div className="bg-red-50 border-2 border-red-200 p-6 rounded-2xl flex items-start gap-4 animate-in shake duration-300">
                   <AlertCircle className="text-red-600 shrink-0" size={24} />
@@ -319,7 +312,7 @@ const TechnicianDashboard: React.FC<Props> = ({ user, missions, week, onUpdateMi
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 {selectedTemplate?.fields.map(field => (
-                  <div key={field.id} className={`${field.type === 'textarea' || field.type === 'signature' ? 'md:col-span-2' : ''} space-y-2`}>
+                  <div key={field.id} className={`${field.type === 'textarea' || field.type === 'signature' || field.type === 'photo' || field.type === 'photo_gallery' ? 'md:col-span-2' : ''} space-y-2`}>
                     <label className={`text-[10px] font-black uppercase tracking-widest px-1 transition-colors ${validationErrors.includes(field.label) ? 'text-red-500' : 'text-slate-400'}`}>
                       {field.label} {field.required && <span className="text-red-500 font-bold">*</span>}
                     </label>
@@ -328,30 +321,95 @@ const TechnicianDashboard: React.FC<Props> = ({ user, missions, week, onUpdateMi
                       <div onClick={() => !isSubmitting && setActiveSignatureFieldId(field.id)} className={`relative h-32 border-2 border-dashed rounded-2xl bg-slate-50 flex items-center justify-center cursor-pointer transition-all ${formData[field.id] ? 'border-emerald-500 bg-emerald-50/20' : 'border-slate-200 hover:bg-indigo-50/50'} ${validationErrors.includes(field.label) ? 'border-red-300 bg-red-50/30' : ''}`}>
                          {formData[field.id] ? <img src={formData[field.id]} alt="Signed" className="h-full object-contain grayscale" /> : <div className="text-slate-400 flex flex-col items-center gap-1 font-black text-[9px] uppercase tracking-tighter"><PenTool size={20}/><p>Cliquer pour signer</p></div>}
                       </div>
+                    ) : field.type === 'photo' ? (
+                      <div className="space-y-2">
+                          <label className={`flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-2xl cursor-pointer bg-slate-50 hover:bg-indigo-50/50 transition-all ${formData[field.id] ? 'border-emerald-500' : 'border-slate-200'}`}>
+                              {formData[field.id] ? (
+                                  <div className="relative w-full h-full p-2"><img src={formData[field.id]} className="w-full h-full object-contain rounded-xl" alt="Preview"/><button type="button" onClick={(e) => {e.preventDefault(); setFormData(p => ({...p, [field.id]: null}))}} className="absolute top-2 right-2 bg-red-500 text-white p-1 rounded-full"><X size={12}/></button></div>
+                              ) : (
+                                  <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                                      <Camera className="w-8 h-8 mb-2 text-slate-400" />
+                                      <p className="mb-2 text-xs text-slate-500"><span className="font-bold">Cliquez pour prendre une photo</span></p>
+                                  </div>
+                              )}
+                              <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) {
+                                      const reader = new FileReader();
+                                      reader.onloadend = () => setFormData(p => ({...p, [field.id]: reader.result}));
+                                      reader.readAsDataURL(file);
+                                  }
+                              }} />
+                          </label>
+                      </div>
+                    ) : field.type === 'photo_gallery' ? (
+                        <div className="space-y-4">
+                            <div className="flex flex-wrap gap-3">
+                                {Array.isArray(formData[field.id]) && formData[field.id].map((photo: string, idx: number) => (
+                                    <div key={idx} className="relative w-24 h-24 border rounded-xl overflow-hidden group">
+                                        <img src={photo} alt={`Photo ${idx+1}`} className="w-full h-full object-cover" />
+                                        <button type="button" onClick={() => {
+                                            const newPhotos = [...formData[field.id]];
+                                            newPhotos.splice(idx, 1);
+                                            setFormData(p => ({...p, [field.id]: newPhotos}));
+                                        }} className="absolute inset-0 bg-black/50 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={16}/></button>
+                                    </div>
+                                ))}
+                                {(!formData[field.id] || formData[field.id].length < 10) && (
+                                    <label className="w-24 h-24 border-2 border-dashed border-slate-200 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:bg-slate-50 text-slate-400 hover:text-indigo-500 transition-all">
+                                        <Plus size={24}/>
+                                        <span className="text-[9px] font-black uppercase mt-1">Ajouter</span>
+                                        <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => {
+                                            const file = e.target.files?.[0];
+                                            if (file) {
+                                                const reader = new FileReader();
+                                                reader.onloadend = () => {
+                                                    const current = Array.isArray(formData[field.id]) ? formData[field.id] : [];
+                                                    if(current.length < 10) setFormData(p => ({...p, [field.id]: [...current, reader.result]}));
+                                                };
+                                                reader.readAsDataURL(file);
+                                            }
+                                        }} />
+                                    </label>
+                                )}
+                            </div>
+                            <p className="text-[10px] text-slate-400 font-bold italic">{Array.isArray(formData[field.id]) ? formData[field.id].length : 0} / 10 photos</p>
+                        </div>
                     ) : field.type === 'checkbox' ? (
                       <button 
                         type="button"
-                        disabled={isSubmitting}
+                        disabled={isSubmitting || field.readOnly}
                         onClick={() => setFormData(p => ({...p, [field.id]: !p[field.id]}))} 
                         className={`w-full p-5 rounded-2xl border-2 font-black flex items-center justify-between transition-all ${formData[field.id] ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-slate-50 border-slate-200 text-slate-400'}`}
                       >
                         {field.id === 'acceptance_type' ? (formData[field.id] ? 'SANS RÉSERVE' : 'AVEC RÉSERVE(S)') : (formData[field.id] ? 'OUI' : 'NON')}
                         {formData[field.id] ? <CheckSquare size={20} /> : <Square size={20} />}
                       </button>
+                    ) : field.type === 'select' ? (
+                       <select 
+                         disabled={isSubmitting || field.readOnly}
+                         value={formData[field.id] || ''}
+                         onChange={e => setFormData(p => ({...p, [field.id]: e.target.value}))}
+                         className={`w-full p-5 bg-slate-50 border-2 rounded-2xl outline-none focus:border-indigo-500 font-bold text-slate-800 transition-colors ${validationErrors.includes(field.label) ? 'border-red-200 bg-red-50/30' : 'border-slate-200'}`}
+                       >
+                          <option value="">Sélectionner...</option>
+                          {field.options?.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                       </select>
                     ) : field.type === 'textarea' ? (
                       <textarea 
-                        disabled={isSubmitting}
+                        disabled={isSubmitting || field.readOnly}
                         value={formData[field.id] || ''} 
                         onChange={e => setFormData(p => ({...p, [field.id]: e.target.value}))} 
                         className={`w-full p-5 bg-slate-50 border-2 rounded-2xl min-h-[140px] outline-none focus:border-indigo-500 font-bold text-slate-800 transition-colors ${validationErrors.includes(field.label) ? 'border-red-200 bg-red-50/30' : 'border-slate-200'}`} 
                       />
                     ) : (
                       <input 
-                        disabled={isSubmitting}
-                        type={field.type} 
+                        disabled={isSubmitting || field.readOnly}
+                        type={field.type === 'email' ? 'email' : field.type === 'number' ? 'number' : 'text'} 
+                        step={field.type === 'number' ? "0.5" : undefined}
                         value={formData[field.id] || ''} 
                         onChange={e => setFormData(p => ({...p, [field.id]: e.target.value}))} 
-                        className={`w-full p-5 bg-slate-50 border-2 rounded-2xl outline-none focus:border-indigo-500 font-bold text-slate-800 transition-colors ${validationErrors.includes(field.label) ? 'border-red-200 bg-red-50/30' : 'border-slate-200'}`} 
+                        className={`w-full p-5 bg-slate-50 border-2 rounded-2xl outline-none focus:border-indigo-500 font-bold text-slate-800 transition-colors ${validationErrors.includes(field.label) ? 'border-red-200 bg-red-50/30' : 'border-slate-200'} ${field.readOnly ? 'bg-slate-100 text-slate-500' : ''}`} 
                       />
                     )}
                   </div>
