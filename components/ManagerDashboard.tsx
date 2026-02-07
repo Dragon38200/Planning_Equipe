@@ -1,7 +1,6 @@
-
 import React, { useState, useMemo } from 'react';
 import { User, Mission, FormResponse, MissionStatus, FormTemplate, MissionType } from '../types';
-import { X, ChevronLeft, ChevronRight, ShieldCheck, ClipboardList, Clock, ShieldX, Sun, Thermometer, GraduationCap, Briefcase } from 'lucide-react';
+import { X, ChevronLeft, ChevronRight, ShieldCheck, ClipboardList, Clock, ShieldX, Sun, Thermometer, GraduationCap, Briefcase, FilePlus, HardHat } from 'lucide-react';
 import { isSameDay, format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, eachDayOfInterval, addDays, subDays, addWeeks, subWeeks, addMonths, subMonths, isToday, startOfDay, endOfDay, getWeek, getYear } from 'date-fns';
 import { fr } from 'date-fns/locale';
 
@@ -13,6 +12,7 @@ interface Props {
   onRemoveMission: (id: string) => void;
   responses: FormResponse[];
   templates: FormTemplate[];
+  onOpenForm?: (templateId: string, initialData: any) => void;
 }
 
 const getStatusIcon = (status: MissionStatus) => {
@@ -42,7 +42,7 @@ const getTypeIcon = (mission: Mission) => {
     return <Briefcase size={12} className="text-slate-400" />;
 };
 
-const ManagerDashboard: React.FC<Props> = ({ user, missions, technicians, onUpdateMissions, onRemoveMission, responses, templates }) => {
+const ManagerDashboard: React.FC<Props> = ({ user, missions, technicians, onUpdateMissions, onRemoveMission, responses, templates, onOpenForm }) => {
   const [view, setView] = useState<'DAY' | 'WEEK' | 'MONTH'>('WEEK');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedMission, setSelectedMission] = useState<Mission | null>(null);
@@ -143,6 +143,24 @@ const ManagerDashboard: React.FC<Props> = ({ user, missions, technicians, onUpda
       setIsRejecting(false);
       setRejectionComment("");
   };
+  
+  const handleCreateReport = (templateId: string) => {
+      if (!selectedMission || !onOpenForm) return;
+      
+      const tech = technicians.find(t => t.id === selectedMission.technicianId);
+      
+      const prefillData = {
+          job_number: selectedMission.jobNumber,
+          address: selectedMission.address || '',
+          technician: tech ? tech.name : selectedMission.technicianId,
+          date: selectedMission.date.split('T')[0],
+          designation: selectedMission.description || '',
+          job_label: selectedMission.description || '',
+          manager_id: user.id
+      };
+      
+      onOpenForm(templateId, prefillData);
+  };
 
   if (!days || days.length === 0) return <div>Chargement du calendrier...</div>;
 
@@ -151,8 +169,8 @@ const ManagerDashboard: React.FC<Props> = ({ user, missions, technicians, onUpda
         {/* MODALE MISSION */}
         {selectedMission && (
             <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-                <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in-95">
-                    <div className="p-6 bg-slate-900 text-white flex justify-between items-center">
+                <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in-95 max-h-[90vh] overflow-y-auto">
+                    <div className="p-6 bg-slate-900 text-white flex justify-between items-center sticky top-0 z-10">
                         <h3 className="text-lg font-black uppercase tracking-tight">Détails Intervention</h3>
                         <button onClick={() => {setSelectedMission(null); setIsRejecting(false);}} className="p-2 hover:bg-white/10 rounded-full"><X/></button>
                     </div>
@@ -163,6 +181,13 @@ const ManagerDashboard: React.FC<Props> = ({ user, missions, technicians, onUpda
                             <div><p className="text-[10px] text-slate-400 uppercase font-black">Affaire</p><p className="font-black text-indigo-600">{selectedMission.jobNumber}</p></div>
                             <div><p className="text-[10px] text-slate-400 uppercase font-black">Heures</p><p className="font-bold text-slate-800">Tv: {selectedMission.workHours}h / Tr: {selectedMission.travelHours}h</p></div>
                             <div className="col-span-2"><p className="text-[10px] text-slate-400 uppercase font-black">Description</p><p className="font-medium text-slate-600 text-sm">{selectedMission.description || 'Aucune description'}</p></div>
+                            <div className="col-span-2"><p className="text-[10px] text-slate-400 uppercase font-black">Adresse</p><p className="font-medium text-slate-600 text-sm">{selectedMission.address || 'Non renseignée'}</p></div>
+                        </div>
+                        
+                        {/* Raccourcis Création Rapport */}
+                        <div className="flex gap-2 border-t pt-4">
+                            <button onClick={() => handleCreateReport('tpl-compte-rendu')} className="flex-1 py-3 bg-indigo-50 text-indigo-600 rounded-xl font-black text-[10px] uppercase hover:bg-indigo-600 hover:text-white transition-all flex items-center justify-center gap-2"><FilePlus size={16}/> Créer Compte Rendu</button>
+                            <button onClick={() => handleCreateReport('tpl-mise-en-chantier')} className="flex-1 py-3 bg-emerald-50 text-emerald-600 rounded-xl font-black text-[10px] uppercase hover:bg-emerald-600 hover:text-white transition-all flex items-center justify-center gap-2"><HardHat size={16}/> Mise en Chantier</button>
                         </div>
 
                         {/* Rapports associés */}

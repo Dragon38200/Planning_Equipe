@@ -1,8 +1,7 @@
-
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { User, Mission, WeekSelection, MissionType, MissionStatus, FormTemplate, FormResponse, FormField } from '../types';
 import { getWeekDates, formatFrenchDate, isSunday } from '../utils';
-import { CheckSquare, Square, X, FileText, Plus, CheckCircle2, PenTool, Loader2, AlertCircle, MapPin, ShieldCheck, ShieldX, Clock, Map, List, Navigation, Camera, Trash2 } from 'lucide-react';
+import { CheckSquare, Square, X, FileText, Plus, CheckCircle2, PenTool, Loader2, AlertCircle, MapPin, ShieldCheck, ShieldX, Clock, Map, List, Navigation, Camera, Trash2, HardHat, FilePlus, ChevronDown } from 'lucide-react';
 import { format, isSameDay } from 'date-fns';
 
 interface Props {
@@ -146,36 +145,41 @@ const TechnicianDashboard: React.FC<Props> = ({ user, missions, week, onUpdateMi
     }
   };
 
-  const handleOpenForm = (mission?: Mission, template?: FormTemplate) => {
-    const t = template || templates.find(temp => temp.id === 'tpl-pv-rec-mounier') || templates[0];
+  const handleOpenForm = (mission?: Mission, templateId?: string) => {
+    // Sélectionner le template demandé ou le défaut (Compte Rendu)
+    const t = templateId 
+        ? templates.find(temp => temp.id === templateId) 
+        : templates.find(temp => temp.id === 'tpl-compte-rendu');
+        
+    if (!t) return;
     setSelectedTemplate(t);
     setValidationErrors([]);
     
     if (mission) {
       setActiveFormMission(mission);
-      const existing = responses.find(r => r.missionId === mission.id);
-      if (existing) {
-        setFormData(existing.data);
-      } else {
-        // Pré-remplissage intelligent
-        const lastJobResponse = [...responses].reverse().find(r => r.data.job_number === mission.jobNumber);
-        setFormData({
+      // Données de base pour le pré-remplissage
+      const baseData = {
           job_number: mission.jobNumber,
           address: mission.address || '',
-          job_label: mission.description || lastJobResponse?.data.job_label || '',
-          client_name: lastJobResponse?.data.client_name || '',
-          cmd_number: lastJobResponse?.data.cmd_number || '',
+          technician: user.name,
+          date: mission.date.split('T')[0],
+          // Mappage approximatif pour description -> designation/libellé
+          designation: mission.description || '',
+          job_label: mission.description || '',
+          // Valeurs par défaut
+          acceptance_type: true,
           rep_mounier: user.name,
-          date_effet: format(new Date(), 'yyyy-MM-dd'),
-          acceptance_type: true
-        });
-      }
+          date_effet: mission.date.split('T')[0]
+      };
+
+      setFormData(baseData);
     } else {
       setActiveFormMission(null);
       setFormData({
         rep_mounier: user.name,
         date_effet: format(new Date(), 'yyyy-MM-dd'),
-        acceptance_type: true
+        acceptance_type: true,
+        technician: user.name
       });
     }
   };
@@ -499,15 +503,18 @@ const TechnicianDashboard: React.FC<Props> = ({ user, missions, week, onUpdateMi
                                     <td className="px-2 py-2 text-center align-middle">{!sun && <input type="checkbox" checked={m.igd} disabled={isLocked} onChange={e => handleMissionChange(m.id, 'igd', e.target.checked)} className="w-6 h-6 rounded-md text-indigo-600 focus:ring-indigo-500 disabled:opacity-50" />}</td>
                                     <td className="px-4 py-2 text-center align-middle">
                                         {!sun && m.jobNumber && (
-                                            <div className="flex items-center justify-center gap-2">
-                                            {m.address && (
-                                                <a href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(m.address)}`} target="_blank" rel="noopener noreferrer" className="p-3 rounded-xl bg-slate-100 text-slate-400 hover:text-blue-600 transition-all" title="Itinéraire">
-                                                    <MapPin size={18}/>
-                                                </a>
-                                            )}
-                                            <button onClick={() => handleOpenForm(m)} className={`p-3 rounded-xl transition-all ${hasResponse ? 'bg-emerald-600 text-white shadow-lg' : 'bg-slate-100 text-slate-400 hover:text-indigo-600'}`} title="Remplir PV">
-                                                {hasResponse ? <CheckCircle2 size={18}/> : <FileText size={18}/>}
-                                            </button>
+                                            <div className="flex items-center justify-center gap-1">
+                                                {m.address && (
+                                                    <a href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(m.address)}`} target="_blank" rel="noopener noreferrer" className="p-2 rounded-xl bg-slate-100 text-slate-400 hover:text-blue-600 transition-all" title="Itinéraire">
+                                                        <MapPin size={16}/>
+                                                    </a>
+                                                )}
+                                                <button onClick={() => handleOpenForm(m, 'tpl-compte-rendu')} className={`p-2 rounded-xl transition-all ${hasResponse ? 'bg-indigo-600 text-white shadow-lg' : 'bg-slate-100 text-slate-400 hover:text-indigo-600'}`} title="Rédiger Compte Rendu">
+                                                    <FilePlus size={16}/>
+                                                </button>
+                                                <button onClick={() => handleOpenForm(m, 'tpl-mise-en-chantier')} className="p-2 rounded-xl bg-slate-100 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition-all" title="Rédiger Mise en Chantier">
+                                                    <HardHat size={16}/>
+                                                </button>
                                             </div>
                                         )}
                                     </td>
@@ -564,6 +571,11 @@ const TechnicianDashboard: React.FC<Props> = ({ user, missions, week, onUpdateMi
                                                 ></iframe>
                                             </div>
                                             
+                                            <div className="grid grid-cols-2 gap-2">
+                                                 <button onClick={() => handleOpenForm(m, 'tpl-compte-rendu')} className="py-2 bg-indigo-50 text-indigo-600 rounded-xl font-black text-[10px] uppercase hover:bg-indigo-600 hover:text-white transition-all flex items-center justify-center gap-2"><FilePlus size={14}/> Rapport</button>
+                                                 <button onClick={() => handleOpenForm(m, 'tpl-mise-en-chantier')} className="py-2 bg-emerald-50 text-emerald-600 rounded-xl font-black text-[10px] uppercase hover:bg-emerald-600 hover:text-white transition-all flex items-center justify-center gap-2"><HardHat size={14}/> Mise en Chantier</button>
+                                            </div>
+
                                             <div className="space-y-2">
                                                 <p className="text-xs text-slate-500 font-medium px-1 truncate"><MapPin size={12} className="inline mr-1"/>{m.address}</p>
                                                 <a 
@@ -596,7 +608,7 @@ const TechnicianDashboard: React.FC<Props> = ({ user, missions, week, onUpdateMi
            <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-xl space-y-6">
               <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">Nouveau Rapport Libre</h2>
               {templates.map(t => (
-                <button key={t.id} onClick={() => handleOpenForm(undefined, t)} className="w-full p-6 bg-slate-50 border-2 border-slate-100 rounded-3xl hover:border-indigo-600 flex items-center justify-between transition-all group">
+                <button key={t.id} onClick={() => handleOpenForm(undefined, t.id)} className="w-full p-6 bg-slate-50 border-2 border-slate-100 rounded-3xl hover:border-indigo-600 flex items-center justify-between transition-all group">
                    <div className="flex items-center gap-4 text-left">
                       <div className="p-3 bg-white rounded-2xl text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white transition-all"><FileText /></div>
                       <div><p className="font-black text-slate-800 uppercase text-xs">{t.name}</p><p className="text-[10px] text-slate-400 font-bold">{t.description}</p></div>

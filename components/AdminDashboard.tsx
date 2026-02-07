@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { User, Role, AppSettings, Mission, MissionType, MissionStatus, FormField } from '../types';
 import { exportToCSV, parseCSV, normalizeString } from '../utils';
@@ -31,12 +30,24 @@ const AdminDashboard: React.FC<Props> = ({ users, onUpdateUsers, appSettings, on
 
   const csvMissionsRef = useRef<HTMLInputElement>(null);
   const csvUsersRef = useRef<HTMLInputElement>(null);
-  const logoInputRef = useRef<HTMLInputElement>(null);
   const reportLogoInputRef = useRef<HTMLInputElement>(null);
   const [settingsForm, setSettingsForm] = useState<AppSettings>(appSettings);
 
   useEffect(() => {
-    setSettingsForm(appSettings);
+    // Si pas de customLogos défini (vieux format), on initialise avec un tableau de 10 vides
+    // Si appLogoUrl existait, on le met en index 0
+    let logos = appSettings.customLogos;
+    if (!logos || logos.length === 0) {
+        logos = Array(10).fill('');
+        if (appSettings.appLogoUrl) {
+            logos[0] = appSettings.appLogoUrl;
+        }
+    } else {
+        // S'assurer qu'il a bien 10 slots
+        while (logos.length < 10) logos.push('');
+    }
+
+    setSettingsForm({ ...appSettings, customLogos: logos });
   }, [appSettings]);
 
   const showStatus = (type: 'success' | 'error', text: string) => {
@@ -231,6 +242,27 @@ const AdminDashboard: React.FC<Props> = ({ users, onUpdateUsers, appSettings, on
     setIsAdding(false); setEditingId(null); setFormData({ name: '', initials: '', role: Role.TECHNICIAN, id: '', email: '', phone: '', password: '', avatarUrl: '' });
   };
   
+  // Helper pour upload logo spécifique
+  const handleLogoUpload = async (index: number, e: React.ChangeEvent<HTMLInputElement>) => {
+      const f = e.target.files?.[0];
+      if (f) {
+          const reader = new FileReader();
+          reader.onload = () => {
+              const res = reader.result as string;
+              const newLogos = [...(settingsForm.customLogos || [])];
+              newLogos[index] = res;
+              setSettingsForm({ ...settingsForm, customLogos: newLogos });
+          };
+          reader.readAsDataURL(f);
+      }
+  };
+
+  const handleLogoDelete = (index: number) => {
+      const newLogos = [...(settingsForm.customLogos || [])];
+      newLogos[index] = '';
+      setSettingsForm({ ...settingsForm, customLogos: newLogos });
+  };
+  
   const managers = users.filter(u => u.role === Role.MANAGER);
   const technicians = users.filter(u => u.role === Role.TECHNICIAN);
   const admins = users.filter(u => u.role === Role.ADMIN);
@@ -291,29 +323,43 @@ const AdminDashboard: React.FC<Props> = ({ users, onUpdateUsers, appSettings, on
           <div className="bg-white p-8 rounded-3xl border border-slate-200/80 shadow-xl shadow-slate-200/40 space-y-8 flex flex-col">
             <div className="flex items-center gap-5">
               <div className="bg-indigo-600 p-3.5 rounded-2xl text-white shadow-xl shadow-indigo-200"><LayoutTemplate size={28} /></div>
-              <div><h1 className="text-2xl font-black text-slate-800 tracking-tight">Identité</h1><p className="text-slate-400 text-xs font-medium uppercase tracking-wider">Nom et logo de l'entreprise.</p></div>
+              <div><h1 className="text-2xl font-black text-slate-800 tracking-tight">Identité</h1><p className="text-slate-400 text-xs font-medium uppercase tracking-wider">Nom et logos de l'entreprise.</p></div>
             </div>
             <div className="flex-1 space-y-6">
               <div className="space-y-2">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Nom de l'application</label>
                 <input type="text" value={settingsForm.appName} onChange={e => setSettingsForm({...settingsForm, appName: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500"/>
               </div>
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Logo Application (Navbar)</label>
-                <div className="flex items-center gap-4">
-                  <div className="w-20 h-20 bg-slate-50 border-2 border-dashed border-slate-200 rounded-2xl flex items-center justify-center overflow-hidden">
-                    {settingsForm.appLogoUrl ? <img src={settingsForm.appLogoUrl} alt="Logo App" className="max-w-full max-h-full object-contain" /> : <ImageIcon className="text-slate-300" size={32} />}
-                  </div>
-                  <input type="file" ref={logoInputRef} onChange={async (e) => {
-                     const f = e.target.files?.[0]; if (f) { const reader = new FileReader(); reader.onload = () => setSettingsForm({...settingsForm, appLogoUrl: reader.result as string}); reader.readAsDataURL(f); }
-                  }} accept="image/*" className="hidden" />
-                  <div className="flex-1 flex gap-2">
-                    <button onClick={() => logoInputRef.current?.click()} className="flex-1 px-4 py-3 bg-slate-100 text-slate-600 rounded-xl text-xs font-black uppercase hover:bg-slate-200">Choisir Image</button>
-                    {settingsForm.appLogoUrl && <button onClick={() => setSettingsForm({...settingsForm, appLogoUrl: ''})} className="p-3 text-red-500 hover:bg-red-50 rounded-xl"><Trash size={16}/></button>}
-                  </div>
-                </div>
-              </div>
               
+              {/* GALERIE LOGOS */}
+              <div className="space-y-4 pt-4 border-t">
+                 <h3 className="text-xs font-black text-slate-600 uppercase tracking-widest">Galerie de Logos</h3>
+                 <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                     {Array.from({length: 10}).map((_, index) => (
+                         <div key={index} className="flex flex-col gap-2">
+                             <div className={`relative aspect-square bg-slate-50 border-2 border-dashed rounded-xl flex items-center justify-center overflow-hidden group ${index === 0 ? 'border-indigo-500 bg-indigo-50/20' : 'border-slate-200'}`}>
+                                 {settingsForm.customLogos && settingsForm.customLogos[index] ? (
+                                     <>
+                                        <img src={settingsForm.customLogos[index]} alt={`Logo ${index+1}`} className="w-full h-full object-contain p-2" />
+                                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                                            <button onClick={() => handleLogoDelete(index)} className="p-2 bg-red-500 text-white rounded-lg hover:bg-red-600"><Trash2 size={16}/></button>
+                                        </div>
+                                     </>
+                                 ) : (
+                                     <div className="text-center p-2">
+                                         <ImageIcon className={`${index === 0 ? 'text-indigo-300' : 'text-slate-300'} mx-auto mb-1`} size={20} />
+                                         <p className="text-[8px] font-black uppercase text-slate-400">{index === 0 ? 'PRINCIPAL' : `LOGO ${index+1}`}</p>
+                                     </div>
+                                 )}
+                                 <input type="file" onChange={(e) => handleLogoUpload(index, e)} accept="image/*" className="absolute inset-0 opacity-0 cursor-pointer" title={`Modifier Logo ${index+1}`} />
+                             </div>
+                         </div>
+                     ))}
+                 </div>
+                 <p className="text-[10px] text-slate-400 italic">Le logo "Principal" remplace celui de la barre de navigation et de l'écran de connexion.</p>
+              </div>
+
+              {/* LOGO PDF (Séparé car usage spécifique rapport) */}
               <div className="space-y-2 border-t pt-4">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Logo pour les Rapports (PDF)</label>
                 <div className="flex items-center gap-4">
