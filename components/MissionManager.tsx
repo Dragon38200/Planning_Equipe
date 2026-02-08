@@ -328,7 +328,42 @@ const MissionManager: React.FC<Props> = ({ missions, technicians, managers, onUp
         </div>
       </div>
 
+      {/*CODE INSERER PAR R.G POUR PILOTAGE GOOGLMAP */}
 
+const [view, setView] = useState<'list' | 'map'>('list');
+
+// Puis ajoute les boutons
+<div className="flex gap-3 justify-center mb-6">
+  <button
+    onClick={() => setView('list')}
+    className={`px-6 py-3 rounded-xl text-xs font-black ${
+      view === 'list' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-400 border-2'
+    }`}
+  >
+    📋 LISTE
+  </button>
+  <button
+    onClick={() => setView('map')}
+    className={`px-6 py-3 rounded-xl text-xs font-black ${
+      view === 'map' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-400 border-2'
+    }`}
+  >
+    🗺️ CARTE
+  </button>
+</div>
+
+{view === 'list' ? (
+  // ... ton tableau actuel ...
+) : (
+  <div className="h-[600px]">
+    <MapView missions={filteredMissions} users={[...technicians, ...managers]} />
+  </div>
+)}
+
+
+
+      {/*FIN DU CODE INSERER */}      
+      
       {/* --- LISTE DES INTERVENTIONS --- */}
       <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl overflow-hidden">
         <div className="overflow-x-auto">
