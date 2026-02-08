@@ -26,7 +26,8 @@ const MissionManager: React.FC<Props> = ({ missions, technicians, managers, onUp
   const [editingMission, setEditingMission] = useState<Mission | null>(null);
   const [missionToDelete, setMissionToDelete] = useState<string | null>(null);
   const [stagedForSave, setStagedForSave] = useState<Mission | null>(null);
-
+  const [view, setView] = useState<'list' | 'map'>('list');
+  
   const filteredMissions = useMemo(() => {
     let result = missions.filter(m => m.jobNumber || m.workHours > 0);
 
@@ -330,36 +331,31 @@ const MissionManager: React.FC<Props> = ({ missions, technicians, managers, onUp
 
       {/*CODE INSERER PAR R.G POUR PILOTAGE GOOGLMAP */}
 
-const [view, setView] = useState<'list' | 'map'>('list');
-
-// Puis ajoute les boutons
-<div className="flex gap-3 justify-center mb-6">
+{/* --- BOUTONS DE VUE --- */}
+<div className="flex gap-3 justify-center">
   <button
     onClick={() => setView('list')}
-    className={`px-6 py-3 rounded-xl text-xs font-black ${
-      view === 'list' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-400 border-2'
+    className={`px-8 py-4 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border-2 ${
+      view === 'list'
+        ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg'
+        : 'bg-white text-slate-400 border-slate-200 hover:border-slate-300'
     }`}
   >
- 
+    <Briefcase className="inline-block mr-2" size={16} />
+    LISTE DES INTERVENTIONS
   </button>
   <button
     onClick={() => setView('map')}
-    className={`px-6 py-3 rounded-xl text-xs font-black ${
-      view === 'map' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-400 border-2'
+    className={`px-8 py-4 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border-2 ${
+      view === 'map'
+        ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg'
+        : 'bg-white text-slate-400 border-slate-200 hover:border-slate-300'
     }`}
   >
-
+    <Map className="inline-block mr-2" size={16} />
+    VUE CARTE
   </button>
 </div>
-
-{view === 'list' ? (
-  // ... ton tableau actuel ...
-) : (
-  <div className="h-[600px]">
-    <MapView missions={filteredMissions} users={[...technicians, ...managers]} />
-  </div>
-)}
-
 
 
       {/*FIN DU CODE INSERER */}      
