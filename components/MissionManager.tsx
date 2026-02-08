@@ -4,6 +4,8 @@ import { Mission, User, MissionType, MissionStatus } from '../types';
 import { Search, SlidersHorizontal, Edit, Trash2, X, Save, Share2, Copy, Clock, Briefcase, Sun, Thermometer, GraduationCap } from 'lucide-react';
 import { format, startOfDay, endOfDay, parseISO } from 'date-fns';
 import { fr } from 'date-fns/locale';
+import MapView from './MapView';
+import { useState } from 'react';
 
 interface Props {
   missions: Mission[];
