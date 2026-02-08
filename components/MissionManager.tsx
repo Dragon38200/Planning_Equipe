@@ -340,7 +340,7 @@ const [view, setView] = useState<'list' | 'map'>('list');
       view === 'list' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-400 border-2'
     }`}
   >
-    📋 LISTE
+ 
   </button>
   <button
     onClick={() => setView('map')}
@@ -348,7 +348,7 @@ const [view, setView] = useState<'list' | 'map'>('list');
       view === 'map' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-400 border-2'
     }`}
   >
-    🗺️ CARTE
+
   </button>
 </div>
 
