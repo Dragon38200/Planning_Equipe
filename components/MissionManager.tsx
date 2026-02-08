@@ -329,35 +329,6 @@ const MissionManager: React.FC<Props> = ({ missions, technicians, managers, onUp
         </div>
       </div>
 
-      {/*CODE INSERER PAR R.G POUR PILOTAGE GOOGLMAP */}
-
-{/* --- BOUTONS DE VUE --- */}
-<div className="flex gap-3 justify-center">
-  <button
-    onClick={() => setView('list')}
-    className={`px-8 py-4 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border-2 ${
-      view === 'list'
-        ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg'
-        : 'bg-white text-slate-400 border-slate-200 hover:border-slate-300'
-    }`}
-  >
-    <Briefcase className="inline-block mr-2" size={16} />
-    LISTE DES INTERVENTIONS
-  </button>
-  <button
-    onClick={() => setView('map')}
-    className={`px-8 py-4 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border-2 ${
-      view === 'map'
-        ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg'
-        : 'bg-white text-slate-400 border-slate-200 hover:border-slate-300'
-    }`}
-  >
-    <Map className="inline-block mr-2" size={16} />
-    VUE CARTE
-  </button>
-</div>
-
-
       {/*FIN DU CODE INSERER */}      
       
       {/* --- LISTE DES INTERVENTIONS --- */}
